@@ -27,6 +27,7 @@ What each provider tracks, where its credentials come from, and what to do when 
 - [Claude](providers/claude.md)
 - [Codex](providers/codex.md)
 - [Copilot](providers/copilot.md)
+- [Command Code](providers/command-code.md)
 - [Cursor](providers/cursor.md)
 - [Devin](providers/devin.md)
 - [Grok](providers/grok.md)

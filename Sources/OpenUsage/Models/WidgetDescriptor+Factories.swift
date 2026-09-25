@@ -31,12 +31,15 @@ extension WidgetDescriptor {
         metricLabel: String? = nil,
         limit: Double,
         limitNoun: String? = nil,
-        valueWord: String? = nil
+        valueWord: String? = nil,
+        sessionStartSignal: WidgetData.SessionStartSignal? = nil
     ) -> WidgetDescriptor {
+        var sample = WidgetData(title: title, icon: provider.icon,
+                               kind: .dollars, used: 0, limit: limit, limitNoun: limitNoun,
+                               unboundedValueWord: valueWord)
+        sample.sessionStartSignal = sessionStartSignal
         make(id: id, provider: provider, metricLabel: metricLabel ?? title,
-             sample: WidgetData(title: title, icon: provider.icon,
-                                kind: .dollars, used: 0, limit: limit, limitNoun: limitNoun,
-                                unboundedValueWord: valueWord))
+             sample: sample)
     }
 
     /// Bounded count meter (e.g. requests per billing cycle). `periodDurationMs` lets the subtitle
