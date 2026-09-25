@@ -314,6 +314,9 @@ final class ClaudeDesktopAuthStoreTests: XCTestCase {
             #"{"oauthAccount":{"accountUuid":"\#(accountUUID)","emailAddress":"dev@example.com"}}"#
         fixture.files.files["\(home.path)/.codex/auth.json"] =
             #"{"tokens":{"access_token":"codex-token","account_id":"CODEX-1"}}"#
+        let fixtureHome = home
+        let fixtureNow = now
+        let fixtureOrganization = organization
         let guardedDesktop = ClaudeDesktopAuthStore(
             files: fixture.files,
             sqlite: fixture.store.sqlite,
@@ -321,20 +324,20 @@ final class ClaudeDesktopAuthStoreTests: XCTestCase {
                 isAdHoc: { true },
                 passwordReader: { _ in throw ClaudeDesktopCredentialError.adHocCodeSignature }
             ),
-            homeDirectory: { home },
-            now: { now }
+            homeDirectory: { fixtureHome },
+            now: { fixtureNow }
         )
         let suite = "OpenUsageTests.AdHocDesktopRead.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let observer = DefaultAccountObserver(
             environment: FakeEnvironment(), files: fixture.files, keychain: FakeKeychain(),
-            homeDirectory: { home }
+            homeDirectory: { fixtureHome }
         )
 
         let assembly = await ProviderAccountAssembly.make(
             observer: observer, accountsStore: ProviderAccountsStore(defaults: defaults),
-            desktop: guardedDesktop, listDesktopOrganizationDirectories: { _ in [organization] }
+            desktop: guardedDesktop, listDesktopOrganizationDirectories: { _ in [fixtureOrganization] }
         )
 
         XCTAssertEqual(assembly.identityKeysByCard["claude"], accountUUID)
