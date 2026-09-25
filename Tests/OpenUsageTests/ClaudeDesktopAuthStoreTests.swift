@@ -342,7 +342,7 @@ final class ClaudeDesktopAuthStoreTests: XCTestCase {
 
         XCTAssertEqual(assembly.identityKeysByCard["claude"], accountUUID)
         XCTAssertEqual(assembly.identityKeysByCard["codex"], "codex-1")
-        XCTAssertEqual(assembly.claudeCards.map(\.usesDesktopCredentials), [false])
+        XCTAssertTrue(assembly.claudeCards.isEmpty)
     }
 
     func testExpiredDesktopTokenIsStale() throws {
