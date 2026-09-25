@@ -10,6 +10,9 @@ final class MetricFormatterTests: XCTestCase {
         XCTAssertEqual(MetricFormatter.number(42, kind: .dollars, style: .tray), "$42")
         XCTAssertEqual(MetricFormatter.number(129.81, kind: .dollars, style: .tray), "$130")
         XCTAssertEqual(MetricFormatter.number(2059.07, kind: .dollars, style: .tray), "$2.1K")
+        // A sub-$1 remainder keeps its cents in the tray too: "$0" would read as "no credit left".
+        XCTAssertEqual(MetricFormatter.number(0.09, kind: .dollars, style: .tray), "$0.09")
+        XCTAssertEqual(MetricFormatter.number(0.4, kind: .dollars, style: .tray), "$0.40")
         // Row: full cents under $1k, abbreviated with one decimal above (matching token counts).
         XCTAssertEqual(MetricFormatter.number(40.76, kind: .dollars, style: .row), "$40.76")
         XCTAssertEqual(MetricFormatter.number(2059.07, kind: .dollars, style: .row), "$2.1K")

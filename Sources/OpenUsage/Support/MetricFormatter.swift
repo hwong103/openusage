@@ -38,8 +38,11 @@ enum MetricFormatter {
             }
             switch style {
             case .tray:
-                // Shortest below $1k: whole dollars ("$130").
-                return "$" + value.formatted(.number.precision(.fractionLength(0)).locale(locale))
+                // Shortest below $1k: whole dollars ("$130"). A sub-$1 remainder is the one case
+                // whole dollars destroys — a $0.09 balance truncates to "$0" and reads as "broke",
+                // which is exactly when the cents matter most, so keep two decimals there.
+                let fractionDigits = (0..<1).contains(value.rounded(.towardZero)) ? 2 : 0
+                return "$" + value.formatted(.number.precision(.fractionLength(fractionDigits)).locale(locale))
             case .row, .full:
                 // Full cents below $1k; the row's token-count neighbor stays readable.
                 return Formatters.currency(value, fractionDigits: 2)

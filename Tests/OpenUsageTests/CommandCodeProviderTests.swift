@@ -96,9 +96,11 @@ final class CommandCodeUsageMapperTests: XCTestCase {
         )
         XCTAssertEqual(mapped.plan, "GOAT")
         XCTAssertEqual(mapped.lines.map(\.label), ["Session", "Weekly", "Monthly", "Requests", "Balance"])
-        assertProgress(mapped.lines[0], used: 0, limit: 14)
-        assertProgress(mapped.lines[1], used: 0, limit: 35)
-        assertProgress(mapped.lines[2], used: 70, limit: 70)
+        // Windows report dollar caps ($14 / $35) but render as percentage-used meters: 0 of $14 and
+        // 0 of $35 are 0%, and a fully spent $70 month is 100%.
+        assertProgress(mapped.lines[0], used: 0, limit: 100, format: .percent)
+        assertProgress(mapped.lines[1], used: 0, limit: 100, format: .percent)
+        assertProgress(mapped.lines[2], used: 100, limit: 100, format: .percent)
         assertValue(mapped.lines[3], number: 18_895, kind: .count)
         assertValue(mapped.lines[4], number: 0.093132698, kind: .dollars)
     }
@@ -112,6 +114,19 @@ final class CommandCodeUsageMapperTests: XCTestCase {
         XCTAssertEqual(mapped.lines.map(\.label), ["Session", "Weekly", "Balance"])
         XCTAssertEqual(CommandCodeUsageMapper.planName(for: "individual-pro-v1"), "Pro")
         XCTAssertEqual(CommandCodeUsageMapper.planName(for: "future-plan"), "Future Plan")
+    }
+
+    func testWindowDollarsBecomePercentUsed() throws {
+        // $7 of a $14 session cap is 50% used — the dollar figure never reaches the meter.
+        let credits = Data(#"""
+        {"credits":{"monthlyCredits":0},"windowLimits":{"limited":true,"fiveHour":{"used":7,"cap":14,"resetAt":0},"weekly":{"used":35,"cap":35,"resetAt":0}}}
+        """#.utf8)
+        let mapped = try CommandCodeUsageMapper.map(creditsBody: credits, summaryBody: nil, subscription: nil)
+        XCTAssertEqual(mapped.lines.map(\.label), ["Session", "Weekly", "Balance"])
+        assertProgress(mapped.lines[0], used: 50, limit: 100, format: .percent)
+        assertProgress(mapped.lines[1], used: 100, limit: 100, format: .percent)
+        // Extra credit is money, so it stays a dollar value.
+        assertValue(mapped.lines[2], number: 0, kind: .dollars)
     }
 
     func testRejectsInvalidCapsAndUnauthorizedResponse() throws {
@@ -242,12 +257,20 @@ private func commandCodeQuery(_ url: URL) -> [String: String] {
     })
 }
 
-private func assertProgress(_ line: MetricLine, used: Double, limit: Double) {
-    guard case .progress(_, let actualUsed, let actualLimit, _, _, _, _) = line else {
+private func assertProgress(
+    _ line: MetricLine,
+    used: Double,
+    limit: Double,
+    format: ProgressFormat? = nil
+) {
+    guard case .progress(_, let actualUsed, let actualLimit, let actualFormat, _, _, _) = line else {
         return XCTFail("Expected progress line")
     }
     XCTAssertEqual(actualUsed, used, accuracy: 0.000001)
     XCTAssertEqual(actualLimit, limit, accuracy: 0.000001)
+    if let format {
+        XCTAssertEqual(actualFormat, format)
+    }
 }
 
 private func assertValue(_ line: MetricLine, number: Double, kind: MetricKind) {

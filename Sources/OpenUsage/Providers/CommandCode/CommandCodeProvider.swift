@@ -28,17 +28,16 @@ final class CommandCodeProvider: ProviderRuntime {
 
     var widgetDescriptors: [WidgetDescriptor] {
         [
-            .boundedDollars(
+            .percent(
                 id: "commandcode.session",
                 provider: provider,
                 title: "Session",
-                limit: 100,
                 sessionStartSignal: .zeroUsage
             )
             .exportingLimit("session", unit: "usd"),
-            .boundedDollars(id: "commandcode.weekly", provider: provider, title: "Weekly", limit: 100)
+            .percent(id: "commandcode.weekly", provider: provider, title: "Weekly")
                 .exportingLimit("weekly", unit: "usd"),
-            .boundedDollars(id: "commandcode.monthly", provider: provider, title: "Monthly", limit: 100)
+            .percent(id: "commandcode.monthly", provider: provider, title: "Monthly")
                 .exportingLimit("monthly", unit: "usd"),
             .dollarBalance(
                 id: "commandcode.balance",

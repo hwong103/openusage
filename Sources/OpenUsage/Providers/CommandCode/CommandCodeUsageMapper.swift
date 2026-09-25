@@ -105,9 +105,9 @@ enum CommandCodeUsageMapper {
                 if monthlyLimit > 0 {
                     lines.insert(.progress(
                         label: "Monthly",
-                        used: monthlyUsed,
-                        limit: monthlyLimit,
-                        format: .dollars,
+                        used: min(100, monthlyUsed / monthlyLimit * 100),
+                        limit: 100,
+                        format: .percent,
                         resetsAt: subscription.currentPeriodEnd,
                         periodDurationMs: subscription.periodDurationMs
                     ), at: min(2, lines.count))
@@ -151,11 +151,15 @@ enum CommandCodeUsageMapper {
         guard cap > 0, window.resetAt.isFinite, window.resetAt >= 0 else {
             throw CommandCodeUsageError.invalidResponse
         }
+        // The API reports each window's budget in dollars, but what a user reads is how much of the
+        // window is gone, so the meter carries the percentage and `limit` is the percent domain's
+        // 100 (the same shape Claude's `utilization` and Codex's `usedPercent` meters already use).
+        let percent = min(100, used / cap * 100)
         return .progress(
             label: label,
-            used: used,
-            limit: cap,
-            format: .dollars,
+            used: percent,
+            limit: 100,
+            format: .percent,
             resetsAt: window.resetAt > 0 ? Date(timeIntervalSince1970: window.resetAt / 1000) : nil,
             periodDurationMs: periodDurationMs
         )
