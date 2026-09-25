@@ -36,6 +36,9 @@ enum DefaultLayout {
         "copilot.premium", "copilot.extra", "copilot.orgCredits", "copilot.orgSpend",
         "copilot.chat", "copilot.completions",
 
+        "commandcode.session", "commandcode.weekly", "commandcode.monthly",
+        "commandcode.balance", "commandcode.requests",
+
         "devin.daily", "devin.weekly", "devin.extra",
 
         "grok.weekly", "grok.trend",
@@ -110,6 +113,7 @@ enum DefaultLayout {
         // caret. Chat/Completions carry real counts on free only — on paid they're unlimited
         // (suppressed), so they read "No data" there.
         "copilot.orgCredits", "copilot.orgSpend", "copilot.chat", "copilot.completions",
+        "commandcode.weekly", "commandcode.monthly", "commandcode.balance", "commandcode.requests",
         "devin.extra",
         "grok.payAsYouGo", "grok.today", "grok.yesterday", "grok.last30",
         // Ollama: Session, Weekly, and Monthly stay above the fold; the rolling four-week spend total
