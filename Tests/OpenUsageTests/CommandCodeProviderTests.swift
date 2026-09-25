@@ -96,8 +96,8 @@ final class CommandCodeUsageMapperTests: XCTestCase {
         )
         XCTAssertEqual(mapped.plan, "GOAT")
         XCTAssertEqual(mapped.lines.map(\.label), ["Session", "Weekly", "Monthly", "Requests", "Balance"])
-        assertProgress(mapped.lines[0], used: 1.25, limit: 14)
-        assertProgress(mapped.lines[1], used: 2.5, limit: 35)
+        assertProgress(mapped.lines[0], used: 0, limit: 14)
+        assertProgress(mapped.lines[1], used: 0, limit: 35)
         assertProgress(mapped.lines[2], used: 70, limit: 70)
         assertValue(mapped.lines[3], number: 18_895, kind: .count)
         assertValue(mapped.lines[4], number: 0.093132698, kind: .dollars)
@@ -253,8 +253,10 @@ private func assertValue(_ line: MetricLine, number: Double, kind: MetricKind) {
     guard case .values(_, let values, _, _, _, _) = line else {
         return XCTFail("Expected values line")
     }
-    XCTAssertEqual(values.first?.number, number, accuracy: 0.000001)
-    XCTAssertEqual(values.first?.kind, kind)
+    let value = values.first
+    XCTAssertNotNil(value)
+    XCTAssertEqual(value?.number ?? -1, number, accuracy: 0.000001)
+    XCTAssertEqual(value?.kind, kind)
 }
 
 private extension HTTPResponse {

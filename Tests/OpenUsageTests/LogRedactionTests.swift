@@ -35,6 +35,14 @@ final class LogRedactionTests: XCTestCase {
         XCTAssertTrue(redacted.contains("limit=10"), redacted)
     }
 
+    func testRedactURLOrganizationParam() {
+        let url = "https://api.example.com/v1?orgId=org-6b6e9de248db472bb25b296599ea3dc0&limit=1"
+        let redacted = LogRedaction.redactURL(url)
+        XCTAssertFalse(redacted.contains("org-6b6e9de248db472bb25b296599ea3dc0"), redacted)
+        XCTAssertTrue(redacted.contains("orgId=org-...3dc0"), redacted)
+        XCTAssertTrue(redacted.contains("limit=1"), redacted)
+    }
+
     func testRedactURLPreservesNonSensitiveParams() {
         let url = "https://api.example.com/v1?limit=10&offset=20"
         XCTAssertEqual(LogRedaction.redactURL(url), url)
