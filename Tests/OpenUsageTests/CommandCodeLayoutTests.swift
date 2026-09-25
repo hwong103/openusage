@@ -15,8 +15,10 @@ final class CommandCodeLayoutTests: XCTestCase {
         for id in orderedMetricIDs {
             XCTAssertTrue(DefaultLayout.metricIDs.contains(id), "\(id) should be enabled")
         }
-        XCTAssertFalse(DefaultLayout.expandedMetricIDs.contains("commandcode.session"))
-        for id in orderedMetricIDs.dropFirst() {
+        for id in ["commandcode.session", "commandcode.balance"] {
+            XCTAssertFalse(DefaultLayout.expandedMetricIDs.contains(id), "\(id) should be always visible")
+        }
+        for id in ["commandcode.weekly", "commandcode.monthly", "commandcode.requests"] {
             XCTAssertTrue(DefaultLayout.expandedMetricIDs.contains(id), "\(id) should be on demand")
         }
         XCTAssertTrue(DefaultLayout.pinnedMetricIDs.filter { $0.hasPrefix("commandcode.") }.isEmpty)
