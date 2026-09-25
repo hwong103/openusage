@@ -192,7 +192,8 @@ final class CommandCodeProviderTests: XCTestCase {
             ),
             usageClient: CommandCodeUsageClient(http: http)
         )
-        XCTAssertTrue(await provider.hasLocalCredentials())
+        let hasCredentials = await provider.hasLocalCredentials()
+        XCTAssertTrue(hasCredentials)
         XCTAssertTrue(http.requests.isEmpty)
     }
 
