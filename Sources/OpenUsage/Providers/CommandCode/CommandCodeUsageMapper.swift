@@ -77,13 +77,19 @@ enum CommandCodeUsageMapper {
         guard balance.isFinite else { throw CommandCodeUsageError.invalidResponse }
 
         var lines: [MetricLine] = []
-        if let fiveHour = credits.windowLimits?.fiveHour,
-           let line = try windowLine(label: "Session", window: fiveHour, periodDurationMs: MetricPeriod.sessionMs) {
-            lines.append(line)
+        if let fiveHour = credits.windowLimits?.fiveHour {
+            lines.append(try windowLine(
+                label: "Session",
+                window: fiveHour,
+                periodDurationMs: MetricPeriod.sessionMs
+            ))
         }
-        if let weekly = credits.windowLimits?.weekly,
-           let line = try windowLine(label: "Weekly", window: weekly, periodDurationMs: MetricPeriod.weekMs) {
-            lines.append(line)
+        if let weekly = credits.windowLimits?.weekly {
+            lines.append(try windowLine(
+                label: "Weekly",
+                window: weekly,
+                periodDurationMs: MetricPeriod.weekMs
+            ))
         }
 
         if let summary {
