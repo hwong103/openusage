@@ -166,17 +166,21 @@ enum CommandCodeUsageMapper {
     }
 
     private static func decode<T: Decodable>(_ body: Data) throws -> T {
+        try decode(T.self, from: body)
+    }
+
+    private static func decode<T: Decodable>(_ type: T.Type, from body: Data) throws -> T {
         do {
-            return try JSONDecoder().decode(T.self, from: body)
+            return try JSONDecoder().decode(type, from: body)
         } catch {
             throw CommandCodeUsageError.invalidResponse
         }
     }
 }
 
-private struct WhoamiPayload: Decodable {
-    var success: Bool?
-    var organizationID: String?
+fileprivate struct WhoamiPayload: Decodable {
+    fileprivate var success: Bool?
+    fileprivate var organizationID: String?
 
     private enum CodingKeys: String, CodingKey {
         case success, org, data
@@ -194,13 +198,13 @@ private struct WhoamiPayload: Decodable {
         }
     }
 
-    private struct Organization: Decodable { var id: String? }
-    private struct DataPayload: Decodable { var org: Organization? }
+    fileprivate struct Organization: Decodable { fileprivate var id: String? }
+    fileprivate struct DataPayload: Decodable { fileprivate var org: Organization? }
 }
 
-private struct SubscriptionPayload: Decodable {
-    var success: Bool?
-    var details: Details?
+fileprivate struct SubscriptionPayload: Decodable {
+    fileprivate var success: Bool?
+    fileprivate var details: Details?
 
     private enum CodingKeys: String, CodingKey {
         case success, data
@@ -217,11 +221,11 @@ private struct SubscriptionPayload: Decodable {
         }
     }
 
-    private struct Details: Decodable {
-        var status: String?
-        var currentPeriodStart: String?
-        var currentPeriodEnd: String?
-        var planID: String?
+    fileprivate struct Details: Decodable {
+        fileprivate var status: String?
+        fileprivate var currentPeriodStart: String?
+        fileprivate var currentPeriodEnd: String?
+        fileprivate var planID: String?
 
         private enum CodingKeys: String, CodingKey {
             case status, currentPeriodStart, currentPeriodEnd, planId
@@ -237,9 +241,9 @@ private struct SubscriptionPayload: Decodable {
     }
 }
 
-private struct CreditsPayload: Decodable {
-    var credits: Credits
-    var windowLimits: WindowLimitsPayload?
+fileprivate struct CreditsPayload: Decodable {
+    fileprivate var credits: Credits
+    fileprivate var windowLimits: WindowLimitsPayload?
 
     private enum CodingKeys: String, CodingKey {
         case credits, windowLimits, data
@@ -257,15 +261,15 @@ private struct CreditsPayload: Decodable {
         }
     }
 
-    private struct Credits: Decodable {
-        var monthlyCredits: Double?
-        var purchasedCredits: Double?
-        var freeCredits: Double?
+    fileprivate struct Credits: Decodable {
+        fileprivate var monthlyCredits: Double?
+        fileprivate var purchasedCredits: Double?
+        fileprivate var freeCredits: Double?
     }
 
-    private struct WindowLimitsPayload: Decodable {
-        var fiveHour: WindowPayload?
-        var weekly: WindowPayload?
+    fileprivate struct WindowLimitsPayload: Decodable {
+        fileprivate var fiveHour: WindowPayload?
+        fileprivate var weekly: WindowPayload?
 
         private enum CodingKeys: String, CodingKey {
             case fiveHour, five_hour, weekly
@@ -279,19 +283,19 @@ private struct CreditsPayload: Decodable {
         }
     }
 
-    private struct DataPayload: Decodable {
-        var credits: Credits
-        var windowLimits: WindowLimitsPayload?
+    fileprivate struct DataPayload: Decodable {
+        fileprivate var credits: Credits
+        fileprivate var windowLimits: WindowLimitsPayload?
     }
 }
 
-private struct WindowPayload: Decodable {
-    var used: Double
-    var cap: Double
-    var resetAt: Double
+fileprivate struct WindowPayload: Decodable {
+    fileprivate var used: Double
+    fileprivate var cap: Double
+    fileprivate var resetAt: Double
 }
 
-private struct UsageSummaryPayload: Decodable {
-    var totalCount: Double?
-    var totalMonthlyCredits: Double?
+fileprivate struct UsageSummaryPayload: Decodable {
+    fileprivate var totalCount: Double?
+    fileprivate var totalMonthlyCredits: Double?
 }

@@ -38,8 +38,8 @@ extension WidgetDescriptor {
                                kind: .dollars, used: 0, limit: limit, limitNoun: limitNoun,
                                unboundedValueWord: valueWord)
         sample.sessionStartSignal = sessionStartSignal
-        make(id: id, provider: provider, metricLabel: metricLabel ?? title,
-             sample: sample)
+        return make(id: id, provider: provider, metricLabel: metricLabel ?? title,
+                    sample: sample)
     }
 
     /// Bounded count meter (e.g. requests per billing cycle). `periodDurationMs` lets the subtitle
