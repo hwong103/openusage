@@ -4,6 +4,7 @@ import Foundation
 enum ClaudeAuthError: Error, LocalizedError, Equatable {
     case notLoggedIn
     case desktopPermissionRequired
+    case desktopCodeSignatureUnsupported
     case desktopTokenExpired
     case swapTokenExpired
     case desktopCredentialsUnavailable
@@ -18,6 +19,8 @@ enum ClaudeAuthError: Error, LocalizedError, Equatable {
             return "Not logged in. Run `claude` to authenticate."
         case .desktopPermissionRequired:
             return "Claude Desktop login found. Refresh once and choose Always Allow to connect it."
+        case .desktopCodeSignatureUnsupported:
+            return "Claude Desktop login can't be read by this ad-hoc signed build. Use a stable signed build to connect it."
         case .swapTokenExpired:
             return "Claude Swap login is stale. Launch this account with `cswap run`, then refresh OpenUsage."
         case .desktopTokenExpired:
@@ -46,7 +49,7 @@ enum ClaudeAuthError: Error, LocalizedError, Equatable {
         case .sessionExpired, .tokenExpired, .desktopTokenExpired, .swapTokenExpired:
             return true
         case .notLoggedIn, .desktopPermissionRequired, .desktopCredentialsUnavailable,
-             .credentialsChanged, .invalidOAuthURL:
+             .desktopCodeSignatureUnsupported, .credentialsChanged, .invalidOAuthURL:
             return false
         }
     }

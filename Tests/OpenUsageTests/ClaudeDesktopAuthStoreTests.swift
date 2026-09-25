@@ -287,6 +287,61 @@ final class ClaudeDesktopAuthStoreTests: XCTestCase {
         XCTAssertEqual(fixture.keyReader.calls, [false, true])
     }
 
+    func testAdHocReaderSkipsKeychainBeforeCallingTheSystem() throws {
+        let reader = ClaudeDesktopSafeStorageKeyReader(
+            isAdHoc: { true },
+            passwordReader: { _ in
+                XCTFail("ad-hoc reader must not call the Keychain")
+                return nil
+            }
+        )
+
+        XCTAssertThrowsError(try reader.readPassword(allowInteraction: false)) { error in
+            guard case ClaudeDesktopCredentialError.adHocCodeSignature = error else {
+                return XCTFail("expected ad-hoc signature error, got \(error)")
+            }
+        }
+    }
+
+    @MainActor
+    func testAdHocDesktopReadPreservesCLICodexAccounts() async throws {
+        let fixture = try makeFixture(
+            activeOrganization: organization,
+            v2: [cacheKey(organization: organization): tokenEntry("desktop-token", expiresIn: 3_600)],
+            accountUUID: accountUUID
+        )
+        fixture.files.files["\(home.path)/.claude.json"] =
+            #"{"oauthAccount":{"accountUuid":"\#(accountUUID)","emailAddress":"dev@example.com"}}"#
+        fixture.files.files["\(home.path)/.codex/auth.json"] =
+            #"{"tokens":{"access_token":"codex-token","account_id":"CODEX-1"}}"#
+        let guardedDesktop = ClaudeDesktopAuthStore(
+            files: fixture.files,
+            sqlite: fixture.store.sqlite,
+            keyReader: ClaudeDesktopSafeStorageKeyReader(
+                isAdHoc: { true },
+                passwordReader: { _ in throw ClaudeDesktopCredentialError.adHocCodeSignature }
+            ),
+            homeDirectory: { home },
+            now: { now }
+        )
+        let suite = "OpenUsageTests.AdHocDesktopRead.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let observer = DefaultAccountObserver(
+            environment: FakeEnvironment(), files: fixture.files, keychain: FakeKeychain(),
+            homeDirectory: { home }
+        )
+
+        let assembly = await ProviderAccountAssembly.make(
+            observer: observer, accountsStore: ProviderAccountsStore(defaults: defaults),
+            desktop: guardedDesktop, listDesktopOrganizationDirectories: { _ in [organization] }
+        )
+
+        XCTAssertEqual(assembly.identityKeysByCard["claude"], accountUUID)
+        XCTAssertEqual(assembly.identityKeysByCard["codex"], "codex-1")
+        XCTAssertEqual(assembly.claudeCards.map(\.usesDesktopCredentials), [false])
+    }
+
     func testExpiredDesktopTokenIsStale() throws {
         let fixture = try makeFixture(
             activeOrganization: organization,

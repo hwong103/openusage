@@ -267,6 +267,7 @@ struct ProviderAccountAssembly {
     ) -> [DesktopOrganization] {
         guard let user = desktop.lastKnownAccountUUID(), desktop.hasCredentialMaterial() else { return [] }
         let active = desktop.load(allowInteraction: false, expectedAccountUUID: user)
+        guard active.status != .signatureUnavailable else { return [] }
         let activeOrganization = active.organization
 
         let root = desktop.homeDirectory().appendingPathComponent("Library/Application Support/Claude")

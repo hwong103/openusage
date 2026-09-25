@@ -8,6 +8,7 @@ enum ClaudeDesktopCredentialStatus: Sendable, Equatable {
     case notChecked
     case notFound
     case permissionRequired
+    case signatureUnavailable
     case stale
     case invalid
     case available
@@ -26,8 +27,27 @@ protocol ClaudeDesktopSafeStorageKeyReading: Sendable {
 struct ClaudeDesktopSafeStorageKeyReader: ClaudeDesktopSafeStorageKeyReading {
     private static let service = "Claude Safe Storage"
     private static let account = "Claude Key"
+    private let isAdHoc: @Sendable () -> Bool
+    private let passwordReader: @Sendable (Bool) throws -> String?
+
+    init(
+        isAdHoc: @escaping @Sendable () -> Bool = ProcessCodeSignature.isAdHoc,
+        passwordReader: @escaping @Sendable (Bool) throws -> String? = { allowInteraction in
+            try Self.readFromKeychain(allowInteraction: allowInteraction)
+        }
+    ) {
+        self.isAdHoc = isAdHoc
+        self.passwordReader = passwordReader
+    }
 
     func readPassword(allowInteraction: Bool) throws -> String? {
+        guard !isAdHoc() else {
+            throw ClaudeDesktopCredentialError.adHocCodeSignature
+        }
+        return try passwordReader(allowInteraction)
+    }
+
+    private static func readFromKeychain(allowInteraction: Bool) throws -> String? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
@@ -64,6 +84,7 @@ struct ClaudeDesktopSafeStorageKeyReader: ClaudeDesktopSafeStorageKeyReading {
 
 enum ClaudeDesktopCredentialError: Error, Sendable {
     case permissionRequired
+    case adHocCodeSignature
     case invalidSafeStorageKey
     case keychainFailure(Int)
     case invalidCiphertext
@@ -183,6 +204,12 @@ struct ClaudeDesktopAuthStore: Sendable {
             }
         } catch ClaudeDesktopCredentialError.permissionRequired {
             return ClaudeDesktopCredentialResult(oauth: nil, status: .permissionRequired)
+        } catch ClaudeDesktopCredentialError.adHocCodeSignature {
+            AppLog.info(
+                .config,
+                "Claude Desktop credential read skipped: the current executable is ad-hoc signed"
+            )
+            return ClaudeDesktopCredentialResult(oauth: nil, status: .signatureUnavailable)
         } catch {
             AppLog.error(LogTag.auth("claude"), "Claude Desktop credential read failed: \(error.localizedDescription)")
             return ClaudeDesktopCredentialResult(oauth: nil, status: .invalid)

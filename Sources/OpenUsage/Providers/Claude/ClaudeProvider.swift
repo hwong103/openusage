@@ -96,7 +96,9 @@ final class ClaudeProvider: ProviderRuntime {
         // material still counts as a local login; the first manual refresh requests access if needed.
         let load = await loadOffMainActor { [authStore] in authStore.loadCredentialSet() }
         if load.candidates.contains(where: \.hasUsableAccessToken) { return true }
-        return load.desktopStatus == .permissionRequired || load.desktopStatus == .stale
+        return load.desktopStatus == .permissionRequired
+            || load.desktopStatus == .signatureUnavailable
+            || load.desktopStatus == .stale
     }
 
     func refresh() async -> ProviderSnapshot {
@@ -129,7 +131,7 @@ final class ClaudeProvider: ProviderRuntime {
             switch credentialLoad.desktopStatus {
             case .permissionRequired:
                 return ProviderSnapshot.error(provider: provider, error: ClaudeAuthError.desktopPermissionRequired)
-            case .stale, .invalid, .notFound:
+            case .stale, .invalid, .notFound, .signatureUnavailable:
                 if let previousFallbackError {
                     return ProviderSnapshot.error(provider: provider, error: previousFallbackError)
                 }
@@ -144,6 +146,8 @@ final class ClaudeProvider: ProviderRuntime {
             switch credentialLoad.desktopStatus {
             case .permissionRequired:
                 ClaudeAuthError.desktopPermissionRequired.localizedDescription
+            case .signatureUnavailable:
+                ClaudeAuthError.desktopCodeSignatureUnsupported.localizedDescription
             case .stale:
                 ClaudeAuthError.desktopTokenExpired.localizedDescription
             case .invalid:
@@ -158,6 +162,20 @@ final class ClaudeProvider: ProviderRuntime {
             switch credentialLoad.desktopStatus {
             case .permissionRequired:
                 return ProviderSnapshot.error(provider: provider, error: ClaudeAuthError.desktopPermissionRequired)
+            case .signatureUnavailable:
+                let error = ClaudeAuthError.desktopCodeSignatureUnsupported
+                let snapshot = await snapshotWithLocalUsage(
+                    mapped: ClaudeMappedUsage(plan: nil, lines: []),
+                    warning: error.localizedDescription
+                )
+                guard let history = snapshot.usageHistory,
+                      history.series.daily.contains(where: {
+                          $0.totalTokens > 0 || ($0.costUSD ?? 0) > 0
+                      })
+                else {
+                    return ProviderSnapshot.error(provider: provider, error: error)
+                }
+                return snapshot
             case .stale:
                 return ProviderSnapshot.error(provider: provider, error: ClaudeAuthError.desktopTokenExpired)
             case .invalid:
