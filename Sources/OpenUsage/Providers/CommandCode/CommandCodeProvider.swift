@@ -2,8 +2,15 @@ import Foundation
 
 @MainActor
 final class CommandCodeProvider: ProviderRuntime {
+    /// Registry identifiers this provider's tray substitution keys on. The Monthly meter is the pool
+    /// state (included allowance vs. purchased top-up credit) that decides whether a pinned Balance is
+    /// redundant or the only meaningful reading, so the strip needs it whether or not it is pinned.
+    static let providerID = "commandcode"
+    static let monthlyMetricID = "commandcode.monthly"
+    static let balanceMetricID = "commandcode.balance"
+
     let provider = Provider(
-        id: "commandcode",
+        id: CommandCodeProvider.providerID,
         displayName: "Command Code",
         icon: .providerMark("commandcode"),
         links: [
@@ -37,10 +44,10 @@ final class CommandCodeProvider: ProviderRuntime {
             .exportingLimit("session", unit: "usd"),
             .percent(id: "commandcode.weekly", provider: provider, title: "Weekly")
                 .exportingLimit("weekly", unit: "usd"),
-            .percent(id: "commandcode.monthly", provider: provider, title: "Monthly")
+            .percent(id: Self.monthlyMetricID, provider: provider, title: "Monthly")
                 .exportingLimit("monthly", unit: "usd"),
             .dollarBalance(
-                id: "commandcode.balance",
+                id: Self.balanceMetricID,
                 provider: provider,
                 title: "Balance",
                 valueWord: "left"

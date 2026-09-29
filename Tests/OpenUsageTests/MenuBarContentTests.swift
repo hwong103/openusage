@@ -112,6 +112,141 @@ final class MenuBarContentTests: XCTestCase {
 
     // MARK: - Fixtures
 
+    // MARK: - Command Code pool substitution
+
+    /// Command Code's percentage windows and its dollar Balance are the same money seen from two
+    /// sides, so the tray shows the percentage while the included monthly allowance remains, and the
+    /// dollar credit only once that allowance is spent.
+    func testCommandCodePinnedBalanceShowsMonthlyPercentageWhileAllowanceRemains() {
+        let content = MenuBarContentBuilder.build(
+            groups: [commandCodeGroup(commandCodeBalance(value: 70.09))],
+            data: commandCodeData(monthlyUsed: 0),
+            registry: commandCodeRegistry()
+        )
+        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.monthly"])
+        XCTAssertEqual(content.groups[0].metrics.map(\.value), ["0%"])
+    }
+
+    func testCommandCodePinnedBalanceKeepsDollarsOnceAllowanceIsSpent() {
+        // A fully spent monthly allowance leaves the balance as purchased top-up credit: finite,
+        // additional, and the only reading worth showing.
+        for used in [100.0, 99.5] {
+            let content = MenuBarContentBuilder.build(
+                groups: [commandCodeGroup(commandCodeBalance(value: 9.5))],
+                data: commandCodeData(monthlyUsed: used),
+                registry: commandCodeRegistry()
+            )
+            XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.balance"], "used \(used)")
+            // Tray style abbreviates to whole dollars above $1; the sub-$1 case keeps its cents.
+            XCTAssertEqual(content.groups[0].metrics.map(\.value), ["$10"], "used \(used)")
+        }
+    }
+
+    func testCommandCodeNearlySpentAllowanceStillCountsAsSpent() {
+        // Half a percent remaining reads as "100% used" on the meter, so calling that unspent would
+        // hide the credit exactly as the pool flips over.
+        let content = MenuBarContentBuilder.build(
+            groups: [commandCodeGroup(commandCodeBalance(value: 0.5))],
+            data: commandCodeData(monthlyUsed: 99.5),
+            registry: commandCodeRegistry()
+        )
+        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.balance"])
+    }
+
+    func testCommandCodeSubstitutionLeavesOtherProvidersAlone() {
+        // A dollar Balance on another provider is a real unbounded figure, not a pool restatement.
+        let content = MenuBarContentBuilder.build(
+            groups: [group("z", unbounded("z.credits", "Credits", 5000))],
+            data: { $0.sample },
+            registry: commandCodeRegistry()
+        )
+        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["z.credits"])
+        XCTAssertEqual(content.groups[0].metrics.map(\.value), ["$5K"])
+    }
+
+    func testCommandCodeRespectsExplicitBalanceAndMonthlyPins() {
+        // Both readings pinned is a deliberate choice; the substitution must not override it.
+        let content = MenuBarContentBuilder.build(
+            groups: [commandCodeGroup(commandCodeBalance(value: 70.09), commandCodeMonthly(used: 0))],
+            data: commandCodeData(monthlyUsed: 0),
+            registry: commandCodeRegistry()
+        )
+        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.balance", "commandcode.monthly"])
+    }
+
+    func testCommandCodeSubstitutionPrefersPercentageWhenMonthlyHasNoData() {
+        // Nothing is known about the pool, so the percentage wins over a possibly stale dollar figure.
+        let content = MenuBarContentBuilder.build(
+            groups: [commandCodeGroup(commandCodeBalance(value: 70.09))],
+            data: { descriptor in
+                guard descriptor.id == "commandcode.monthly" else { return descriptor.sample }
+                var sample = descriptor.sample
+                sample.hasData = false
+                return sample
+            },
+            registry: commandCodeRegistry()
+        )
+        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.monthly"])
+    }
+
+    func testCommandCodeSubstitutionIsSkippedWithoutRegistry() {
+        // Call sites that pass no registry render pins literally rather than substituting.
+        let content = MenuBarContentBuilder.build(
+            groups: [commandCodeGroup(commandCodeBalance(value: 70.09))],
+            data: commandCodeData(monthlyUsed: 0)
+        )
+        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.balance"])
+    }
+
+    private func commandCodeGroup(_ metrics: WidgetDescriptor...) -> ProviderMetrics {
+        ProviderMetrics(
+            provider: Provider(
+                id: "commandcode",
+                displayName: "Command Code",
+                icon: .providerMark("commandcode")
+            ),
+            metrics: metrics
+        )
+    }
+
+    private func commandCodeRegistry() -> WidgetRegistry {
+        WidgetRegistry(
+            providers: [],
+            descriptors: [commandCodeMonthly(used: 0), commandCodeBalance(value: 70.09)]
+        )
+    }
+
+    /// Resolve Command Code descriptors, pinning the Monthly value the test is exercising while the
+    /// Balance descriptor still carries its own dollars.
+    private func commandCodeData(monthlyUsed: Double) -> (WidgetDescriptor) -> WidgetData {
+        { descriptor in
+            guard descriptor.id == "commandcode.monthly" else { return descriptor.sample }
+            return WidgetData(
+                title: "Monthly",
+                icon: .providerMark("commandcode"),
+                kind: .percent,
+                used: monthlyUsed,
+                limit: 100
+            )
+        }
+    }
+
+    private func commandCodeMonthly(used: Double) -> WidgetDescriptor {
+        descriptor(
+            "commandcode.monthly",
+            "Monthly",
+            WidgetData(title: "Monthly", icon: .providerMark("commandcode"), kind: .percent, used: used, limit: 100)
+        )
+    }
+
+    private func commandCodeBalance(value: Double) -> WidgetDescriptor {
+        descriptor(
+            "commandcode.balance",
+            "Balance",
+            WidgetData(title: "Balance", icon: .providerMark("commandcode"), kind: .dollars, used: value, limit: nil)
+        )
+    }
+
     private func group(_ providerID: String, _ metrics: WidgetDescriptor...) -> ProviderMetrics {
         let provider = Provider(
             id: providerID,

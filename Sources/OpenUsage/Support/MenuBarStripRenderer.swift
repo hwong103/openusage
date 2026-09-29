@@ -135,13 +135,13 @@ enum MenuBarStripRenderer {
 /// single-metric Text strip, so the swap doesn't jump the menu bar's rhythm.
 private struct MenuBarPrivacyLabel: View {
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             // The same mark and inset as `MenuBarIcon` (the art carries its own margin), sized to the
             // strip's glyph box so the swap keeps the provider-glyph scale.
             if let mark = ProviderMarks.mark(for: "openusage") {
                 ProviderIconShape(mark: mark, inset: 0.08)
                     .fill(Color.black)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 18, height: 18)
             }
             Text("OpenUsage")
                 .font(.system(size: 12, weight: .bold))
@@ -159,7 +159,10 @@ private struct MenuBarTextStrip: View {
     var body: some View {
         HStack(spacing: 11) {
             ForEach(content.groups, id: \.providerID) { group in
-                HStack(spacing: 4) {
+                // The glyph carries its own bounding-box margin, so a tight gap let the provider mark
+                // visually merge into the digits beside it. 6pt keeps mark and value as two readable
+                // objects without opening a hole in the strip.
+                HStack(spacing: 6) {
                     glyph(group.icon)
                     metricsView(group.metrics)
                 }
@@ -194,7 +197,7 @@ private struct MenuBarTextStrip: View {
     /// scale as the dual-line metric block beside it (the single number is shorter), instead of
     /// floating small in the middle. `ProviderIconShape` already normalizes every mark to its true
     /// bounding box, so a near-zero `inset` here makes each provider fill this box uniformly.
-    private static let glyphSide: CGFloat = 16
+    private static let glyphSide: CGFloat = 18
 
     @ViewBuilder
     private func glyph(_ icon: IconSource) -> some View {
