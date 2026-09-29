@@ -114,10 +114,9 @@ final class MenuBarContentTests: XCTestCase {
 
     // MARK: - Command Code pool substitution
 
-    /// Command Code's percentage windows and its dollar Balance are the same money seen from two
-    /// sides, so the tray shows the percentage while the included monthly allowance remains, and the
-    /// dollar credit only once that allowance is spent.
-    func testCommandCodePinnedBalanceShowsMonthlyPercentageWhileAllowanceRemains() {
+    /// While the included monthly allowance holds, a pinned Balance is those same dollars restated, so
+    /// the strip stands the Monthly percentage in its place.
+    func testCommandCodePinnedBalanceYieldsToMonthlyWhileAllowanceRemains() {
         let content = MenuBarContentBuilder.build(
             groups: [commandCodeGroup(commandCodeBalance(value: 70.09))],
             data: commandCodeData(monthlyUsed: 0),
@@ -127,9 +126,9 @@ final class MenuBarContentTests: XCTestCase {
         XCTAssertEqual(content.groups[0].metrics.map(\.value), ["0%"])
     }
 
-    func testCommandCodePinnedBalanceKeepsDollarsOnceAllowanceIsSpent() {
-        // A fully spent monthly allowance leaves the balance as purchased top-up credit: finite,
-        // additional, and the only reading worth showing.
+    func testCommandCodeKeepsDollarsOnceAllowanceIsSpent() {
+        // A spent monthly allowance leaves the balance as purchased top-up credit: finite, additional,
+        // and the only reading worth showing.
         for used in [100.0, 99.5] {
             let content = MenuBarContentBuilder.build(
                 groups: [commandCodeGroup(commandCodeBalance(value: 9.5))],
@@ -142,15 +141,43 @@ final class MenuBarContentTests: XCTestCase {
         }
     }
 
+    /// The default pin set: Session + Weekly, no Balance. The strip supplies the dollar reading only
+    /// when the pool runs out, so a spent allowance still surfaces the finite top-up credit.
+    func testCommandCodeDefaultPinsShowWindowsAndAddBalanceOnceSpent() {
+        let windows = [commandCodeSession(), commandCodeWeekly()]
+        let intact = MenuBarContentBuilder.build(
+            groups: [commandCodeGroup(windows[0], windows[1])],
+            data: commandCodeData(monthlyUsed: 0),
+            registry: commandCodeRegistry()
+        )
+        XCTAssertEqual(intact.groups[0].metrics.map(\.id), ["commandcode.session", "commandcode.weekly"])
+
+        let spent = MenuBarContentBuilder.build(
+            groups: [commandCodeGroup(windows[0], windows[1])],
+            data: commandCodeData(monthlyUsed: 100),
+            registry: commandCodeRegistry()
+        )
+        // Balance is appended rather than swapped in: the windows are the user's real pins, so they
+        // stay and the credit is added on top of them.
+        XCTAssertEqual(
+            spent.groups[0].metrics.map(\.id),
+            ["commandcode.session", "commandcode.weekly", "commandcode.balance"]
+        )
+        XCTAssertEqual(spent.groups[0].metrics.last?.value, "$10")
+    }
+
     func testCommandCodeNearlySpentAllowanceStillCountsAsSpent() {
         // Half a percent remaining reads as "100% used" on the meter, so calling that unspent would
         // hide the credit exactly as the pool flips over.
         let content = MenuBarContentBuilder.build(
-            groups: [commandCodeGroup(commandCodeBalance(value: 0.5))],
+            groups: [commandCodeGroup(commandCodeSession(), commandCodeWeekly())],
             data: commandCodeData(monthlyUsed: 99.5),
             registry: commandCodeRegistry()
         )
-        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.balance"])
+        XCTAssertEqual(
+            content.groups[0].metrics.map(\.id),
+            ["commandcode.session", "commandcode.weekly", "commandcode.balance"]
+        )
     }
 
     func testCommandCodeSubstitutionLeavesOtherProvidersAlone() {
@@ -165,19 +192,21 @@ final class MenuBarContentTests: XCTestCase {
     }
 
     func testCommandCodeRespectsExplicitBalanceAndMonthlyPins() {
-        // Both readings pinned is a deliberate choice; the substitution must not override it.
+        // Both readings pinned is a deliberate choice; the substitution must not override it, so no
+        // third reading is injected either.
         let content = MenuBarContentBuilder.build(
-            groups: [commandCodeGroup(commandCodeBalance(value: 70.09), commandCodeMonthly(used: 0))],
-            data: commandCodeData(monthlyUsed: 0),
+            groups: [commandCodeGroup(commandCodeBalance(value: 70.09), commandCodeMonthly(used: 100))],
+            data: commandCodeData(monthlyUsed: 100),
             registry: commandCodeRegistry()
         )
         XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.balance", "commandcode.monthly"])
     }
 
-    func testCommandCodeSubstitutionPrefersPercentageWhenMonthlyHasNoData() {
-        // Nothing is known about the pool, so the percentage wins over a possibly stale dollar figure.
+    func testCommandCodePrefersWindowsWhenPoolStateIsUnknown() {
+        // Nothing is known about the pool, so the windows stand on their own — a possibly stale dollar
+        // figure is never injected on a guess.
         let content = MenuBarContentBuilder.build(
-            groups: [commandCodeGroup(commandCodeBalance(value: 70.09))],
+            groups: [commandCodeGroup(commandCodeSession(), commandCodeWeekly())],
             data: { descriptor in
                 guard descriptor.id == "commandcode.monthly" else { return descriptor.sample }
                 var sample = descriptor.sample
@@ -186,16 +215,16 @@ final class MenuBarContentTests: XCTestCase {
             },
             registry: commandCodeRegistry()
         )
-        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.monthly"])
+        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.session", "commandcode.weekly"])
     }
 
     func testCommandCodeSubstitutionIsSkippedWithoutRegistry() {
-        // Call sites that pass no registry render pins literally rather than substituting.
+        // Call sites that pass no registry render pins literally: no swap, and no injected Balance.
         let content = MenuBarContentBuilder.build(
-            groups: [commandCodeGroup(commandCodeBalance(value: 70.09))],
-            data: commandCodeData(monthlyUsed: 0)
+            groups: [commandCodeGroup(commandCodeSession(), commandCodeWeekly())],
+            data: commandCodeData(monthlyUsed: 100)
         )
-        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.balance"])
+        XCTAssertEqual(content.groups[0].metrics.map(\.id), ["commandcode.session", "commandcode.weekly"])
     }
 
     private func commandCodeGroup(_ metrics: WidgetDescriptor...) -> ProviderMetrics {
@@ -211,8 +240,15 @@ final class MenuBarContentTests: XCTestCase {
 
     private func commandCodeRegistry() -> WidgetRegistry {
         WidgetRegistry(
-            providers: [],
-            descriptors: [commandCodeMonthly(used: 0), commandCodeBalance(value: 70.09)]
+            providers: [commandCodeGroup().provider],
+            // Registry order, which is the order CommandCodeProvider declares: the substitution places
+            // an injected Balance where that order puts it, not at the end of the pin list.
+            descriptors: [
+                commandCodeSession(),
+                commandCodeWeekly(),
+                commandCodeMonthly(used: 0),
+                commandCodeBalance(value: 70.09)
+            ]
         )
     }
 
@@ -244,6 +280,22 @@ final class MenuBarContentTests: XCTestCase {
             "commandcode.balance",
             "Balance",
             WidgetData(title: "Balance", icon: .providerMark("commandcode"), kind: .dollars, used: value, limit: nil)
+        )
+    }
+
+    private func commandCodeSession() -> WidgetDescriptor {
+        descriptor(
+            "commandcode.session",
+            "Session",
+            WidgetData(title: "Session", icon: .providerMark("commandcode"), kind: .percent, used: 0, limit: 100)
+        )
+    }
+
+    private func commandCodeWeekly() -> WidgetDescriptor {
+        descriptor(
+            "commandcode.weekly",
+            "Weekly",
+            WidgetData(title: "Weekly", icon: .providerMark("commandcode"), kind: .percent, used: 0, limit: 100)
         )
     }
 

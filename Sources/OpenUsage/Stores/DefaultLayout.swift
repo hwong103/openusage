@@ -84,6 +84,11 @@ enum DefaultLayout {
         "codex.session", "codex.weekly",
         "cursor.auto", "cursor.api",
         "copilot.premium",
+        // Command Code pins the two usage windows rather than its Balance: while the included monthly
+        // allowance holds, Balance is those same dollars restated and adds nothing to a percentage
+        // readout. The strip swaps in the Balance automatically once that allowance is spent and the
+        // remaining figure is real top-up credit, so the pin itself never needs to change.
+        "commandcode.session", "commandcode.weekly",
         "ollama.session", "ollama.weekly",
         "openrouter.credits",
         "zai.session", "zai.weekly"

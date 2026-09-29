@@ -98,19 +98,19 @@ enum MenuBarContentBuilder {
         return descriptors.map { resolve($0, data($0)) }.filter(\.hasData)
     }
 
-    /// Command Code meters a *pool*, so the percentage windows and the dollar Balance are the same money
-    /// seen from two sides and only one of them is meaningful at a time:
+    /// Command Code meters a *pool*, so its percentage windows and its dollar Balance are the same money
+    /// seen from two sides, and which one is worth showing depends on the pool state rather than on a
+    /// fixed pin:
     ///
-    /// - While the included monthly allowance still has room, the percentage is the honest reading and a
-    ///   dollar Balance is the same allowance restated in dollars, so a pinned Balance becomes the
-    ///   Monthly percentage.
-    /// - Once the allowance is spent, the remaining Balance is *purchased top-up credit* — genuinely
-    ///   additional and genuinely finite — so Balance is kept and reads as dollars rather than a
-    ///   permanent 100%.
+    /// - While the included monthly allowance still has room, the percentage windows are the honest
+    ///   reading and the dollar Balance is that same allowance restated in dollars, so a pinned Balance
+    ///   reads as noise and yields its slot to the Monthly percentage.
+    /// - Once the allowance is spent, the remaining Balance is *purchased top-up credit* — additional,
+    ///   finite, and the one figure worth watching — so the Monthly percentage is dropped in favour of it.
     ///
-    /// The swap is presentational: it never adds, drops, or reorders a pin, so the Customize layout the
-    /// user configured is untouched. The driver is read from live data whether or not Monthly is itself
-    /// pinned, because the pool state (not the pin set) decides which reading is real.
+    /// The substitution is presentational only: pins, their order, and the Customize layout are
+    /// untouched. It is decided from live Monthly data whether or not Monthly is itself pinned, because
+    /// the pool state — not the pin set — decides which reading is real.
     private static func traySubstituted(
         _ group: ProviderMetrics,
         data: (WidgetDescriptor) -> WidgetData,
@@ -120,27 +120,50 @@ enum MenuBarContentBuilder {
         let balanceID = CommandCodeProvider.balanceMetricID
         let monthlyID = CommandCodeProvider.monthlyMetricID
         guard group.provider.id == CommandCodeProvider.providerID,
-              let monthly = registry?.descriptor(id: monthlyID),
-              pinned.contains(where: { $0.id == balanceID }),
-              // Both readings already pinned is an explicit choice — never override it.
-              !pinned.contains(where: { $0.id == monthlyID })
+              let monthly = registry?.descriptor(id: monthlyID)
         else {
             return pinned
         }
-        // No live Monthly reading (provider still loading, or the API omitted it) is no evidence that
-        // the allowance is spent, so the percentage — the reading that is right in the common case — wins.
+        // Both readings explicitly pinned is a deliberate choice — never override it.
+        let hasBalance = pinned.contains { $0.id == balanceID }
+        let hasMonthly = pinned.contains { $0.id == monthlyID }
+        guard hasBalance != hasMonthly else { return pinned }
+
+        // No live Monthly reading (provider still loading, or the API omitted it) is no evidence that the
+        // allowance is spent, so the percentage — correct in the common case — is what gets shown.
         let monthlyData = data(monthly)
         let allowanceSpent = monthlyData.hasData
             && monthlyData.used > 0
             && monthlyData.remainingFraction <= Self.creditTopUpThreshold
-        guard !allowanceSpent else { return pinned }
-        // Substitute the Monthly *descriptor* rather than rewriting Balance's sample: `data(for:)`
-        // resolves a descriptor against its provider's metric lines by `metricLabel`, so handing it the
-        // real Monthly descriptor is what makes the tray read the percentage. Balance is then absent
-        // from this segment only because the user did not pin it.
-        return pinned.map { descriptor in
-            descriptor.id == balanceID ? monthly : descriptor
+
+        // Pool intact: the pinned dollars are the allowance restated, so stand Monthly in their slot.
+        // Pool spent: the dollars are top-up credit and are kept, and an unpinned Monthly is withheld so
+        // a permanent 100% never crowds out the finite balance.
+        if hasBalance {
+            guard !allowanceSpent else { return pinned }
+            // Substitute the Monthly *descriptor* rather than rewriting Balance's sample: `data(for:)`
+            // resolves a descriptor against its provider's metric lines by `metricLabel`, so handing it
+            // the real Monthly descriptor is what makes the tray read the percentage.
+            return pinned.map { $0.id == balanceID ? monthly : $0 }
         }
+        guard allowanceSpent else { return pinned }
+        let order = Self.trayOrder(in: group, registry: registry)
+        let position = order.firstIndex(of: monthlyID) ?? order.count
+        var result = pinned
+        let balance = registry?.descriptor(id: balanceID)
+        if let balance {
+            result.insert(balance, at: min(position, result.count))
+        }
+        return result
+    }
+
+    /// The provider's own metric order, used to place a substituted metric where it belongs rather than
+    /// wherever the pin set happens to leave a gap.
+    private static func trayOrder(in group: ProviderMetrics, registry: WidgetRegistry?) -> [String] {
+        if let ordered = registry?.descriptors(for: group.provider.id), !ordered.isEmpty {
+            return ordered.map(\.id)
+        }
+        return group.metrics.map(\.id)
     }
 
     /// How much of the included monthly allowance must be spent before the tray treats the dollar

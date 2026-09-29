@@ -6,6 +6,8 @@ final class CommandCodeProvider: ProviderRuntime {
     /// state (included allowance vs. purchased top-up credit) that decides whether a pinned Balance is
     /// redundant or the only meaningful reading, so the strip needs it whether or not it is pinned.
     static let providerID = "commandcode"
+    static let sessionMetricID = "commandcode.session"
+    static let weeklyMetricID = "commandcode.weekly"
     static let monthlyMetricID = "commandcode.monthly"
     static let balanceMetricID = "commandcode.balance"
 
@@ -36,13 +38,13 @@ final class CommandCodeProvider: ProviderRuntime {
     var widgetDescriptors: [WidgetDescriptor] {
         [
             .percent(
-                id: "commandcode.session",
+                id: CommandCodeProvider.sessionMetricID,
                 provider: provider,
                 title: "Session",
                 sessionStartSignal: .zeroUsage
             )
             .exportingLimit("session", unit: "usd"),
-            .percent(id: "commandcode.weekly", provider: provider, title: "Weekly")
+            .percent(id: CommandCodeProvider.weeklyMetricID, provider: provider, title: "Weekly")
                 .exportingLimit("weekly", unit: "usd"),
             .percent(id: Self.monthlyMetricID, provider: provider, title: "Monthly")
                 .exportingLimit("monthly", unit: "usd"),

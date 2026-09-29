@@ -21,7 +21,12 @@ final class CommandCodeLayoutTests: XCTestCase {
         for id in ["commandcode.weekly", "commandcode.monthly", "commandcode.requests"] {
             XCTAssertTrue(DefaultLayout.expandedMetricIDs.contains(id), "\(id) should be on demand")
         }
-        XCTAssertTrue(DefaultLayout.pinnedMetricIDs.filter { $0.hasPrefix("commandcode.") }.isEmpty)
+        // The windows are pinned so the menu-bar segment matches every other provider's shape; the
+        // Balance is withheld by the strip until the monthly allowance is actually spent.
+        XCTAssertEqual(
+            DefaultLayout.pinnedMetricIDs.filter { $0.hasPrefix("commandcode.") },
+            ["commandcode.session", "commandcode.weekly"]
+        )
     }
 
     func testProviderOrderAndMetricOrder() {
