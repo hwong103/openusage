@@ -80,6 +80,10 @@ struct ClaudeAuthStore: Sendable {
     let desktopOnly: Bool
     let swapAccount: ClaudeSwapAccount?
     let preferOrganizationScopedDesktop: Bool
+    /// Whether Claude Desktop's `Claude Safe Storage` Keychain item may be opened — see
+    /// `ClaudeDesktopImportSetting`. The app's composition root passes the user's choice; the permissive
+    /// default keeps one-shot callers and tests behaving exactly as they did before the setting existed.
+    var desktopImportEnabled: @Sendable () -> Bool = { true }
 
     init(
         environment: EnvironmentReading = ProcessEnvironmentReader(),
@@ -91,6 +95,7 @@ struct ClaudeAuthStore: Sendable {
         desktopOnly: Bool = false,
         swapAccount: ClaudeSwapAccount? = nil,
         preferOrganizationScopedDesktop: Bool = false,
+        desktopImportEnabled: @escaping @Sendable () -> Bool = { true },
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.environment = environment
@@ -102,6 +107,7 @@ struct ClaudeAuthStore: Sendable {
         self.desktopOnly = desktopOnly
         self.swapAccount = swapAccount
         self.preferOrganizationScopedDesktop = preferOrganizationScopedDesktop
+        self.desktopImportEnabled = desktopImportEnabled
         self.now = now
     }
 
@@ -122,7 +128,10 @@ struct ClaudeAuthStore: Sendable {
                                                   keychain: keychain, homeDirectory: { home })
             if case let .resolved(identity, _, anchor) = observer.observeClaude(),
                identity == swapAccount.identityKey, anchor != swapAccount.sessionDirectory {
-                let defaultStore = ClaudeAuthStore(environment: environment, files: files, keychain: keychain, now: now)
+                let defaultStore = ClaudeAuthStore(
+                    environment: environment, files: files, keychain: keychain,
+                    desktopImportEnabled: desktopImportEnabled, now: now
+                )
                 candidates = defaultStore.orderedStoredCandidates().map { state in
                     var state = state
                     if state.source == .file { state.source = .accountFile(path: defaultStore.credentialsPath()) }
@@ -143,7 +152,11 @@ struct ClaudeAuthStore: Sendable {
         let hasUsableCLILogin = stored.contains {
             $0.hasUsableAccessToken && liveUsageAvailability($0) == .available
         }
-        if swapAccount != nil || forceDesktopFallback || !hasUsableCLILogin || preferOrganizationScopedDesktop {
+        // Claude Desktop's Keychain item is only opened when the user allows it — see
+        // `ClaudeDesktopImportSetting`; macOS re-prompts for the Keychain password once per signed build
+        // and cannot be told not to.
+        if desktopImportEnabled(),
+           swapAccount != nil || forceDesktopFallback || !hasUsableCLILogin || preferOrganizationScopedDesktop {
             let expectedUser = expectedIdentityKey?.split(separator: "|").first.map(String.init)
             let result = desktop.load(
                 allowInteraction: allowDesktopInteraction,

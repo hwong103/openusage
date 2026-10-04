@@ -12,9 +12,12 @@ enum ProviderCatalog {
     ) -> [ProviderRuntime] {
         // Default provider order (see AGENTS.md "## Providers"): the three established providers first,
         // then every other provider alphabetically by display name.
+        // Claude Desktop's Keychain item is opt-in; see `ClaudeDesktopImportSetting`. Read live so
+        // flipping the Settings toggle applies on the next refresh rather than at relaunch.
+        let desktopImportEnabled: @Sendable () -> Bool = { ClaudeDesktopImportSetting.isEnabled }
         var providers: [ProviderRuntime]
         if claudeCards.isEmpty {
-            providers = [ClaudeProvider()]
+            providers = [ClaudeProvider(authStore: ClaudeAuthStore(desktopImportEnabled: desktopImportEnabled))]
         } else {
             providers = claudeCards.map { card in
                 let identity = claudeIdentityKeys[card.id] ?? card.identityKey
@@ -35,7 +38,8 @@ enum ProviderCatalog {
                         desktopOnly: card.usesDesktopCredentials,
                         swapAccount: card.swapAccount,
                         preferOrganizationScopedDesktop: claudeCards.count > 1
-                            && card.organizationID != nil && !card.usesDesktopCredentials
+                            && card.organizationID != nil && !card.usesDesktopCredentials,
+                        desktopImportEnabled: desktopImportEnabled
                     ),
                     logUsageScanner: scanner,
                     allowsUnattributedPiUsage: card.allowsUnattributedPiUsage

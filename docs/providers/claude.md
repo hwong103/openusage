@@ -57,10 +57,17 @@ Both older Desktop login caches and newer account-specific caches are supported.
 tokens must match the account currently signed in to Desktop and the card's organization. A newer
 cache entry or deletion marker takes precedence over an older copy of the same login.
 
-macOS asks once before OpenUsage can access that Keychain item. Background refreshes never open the
-password dialog: OpenUsage first asks you to refresh manually, and choosing **Always Allow** makes later
-refreshes silent. If Desktop's short-lived token expires, open Claude Desktop so it can renew the login,
-then refresh OpenUsage.
+Desktop support is opt-in here: **Settings → General → Import Claude Desktop Login**, off by default.
+With it off, OpenUsage never opens the `Claude Safe Storage` item, so nothing you do — updating the app
+included — can make macOS ask for your Keychain password. Your meters keep working from the Claude Code
+login (source 1 or 2) plus local logs.
+
+Leave it off and the Keychain stays untouched. Turn it on and macOS asks once before OpenUsage can
+access the item; choosing **Always Allow** makes later refreshes silent — but only until the app is
+rebuilt or updated. macOS scopes that item's partition list to each signed build, so a freshly built
+app looks new to it and asks again. Background refreshes never open the dialog on their own: OpenUsage
+asks you to refresh manually first. If Desktop's short-lived token expires, open Claude Desktop so it
+can renew the login, then refresh OpenUsage.
 
 A `CLAUDE_CODE_OAUTH_TOKEN` — usually a long-lived `claude setup-token` — can run the model but can't read your Session and Weekly limits, and it often lingers in your shell environment. So when a real keychain or file login is present, OpenUsage uses that login for the live meters and keeps the environment token only as a fallback; the Session/Weekly meters no longer go blank just because that token is set. If the environment token is your *only* credential (a headless setup), it's used on its own and the spend tiles still load from local logs.
 

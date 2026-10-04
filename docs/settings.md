@@ -7,6 +7,7 @@ Settings lives inside the popover — there is no separate window. Open it from 
 | Setting | Options | What it does |
 |---|---|---|
 | Show Total Spend | on/off | Whether the cross-provider [Total Spend](dashboard.md#total-spend) card shows at the top of the dashboard. On by default; the card appears whenever at least one enabled provider tracks spend (Claude, Codex, Command Code, Cursor, Grok, OpenCode). |
+| Import Claude Desktop Login | on/off | Whether OpenUsage may open Claude Desktop's `Claude Safe Storage` Keychain item. Off by default; Claude's meters come from the Claude Code login and local logs either way. Turning it on adds a Desktop login (and any extra organizations), and costs one Keychain password prompt per update of this app. |
 | Launch at Login | on/off | Registers the app as a login item (the system's login-item registry is the source of truth). |
 | Global Shortcut | record a shortcut | Global shortcut that toggles the popover from anywhere. Click the field and press a combo; the ⓧ clears it and disables the shortcut. |
 

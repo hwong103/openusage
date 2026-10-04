@@ -18,6 +18,7 @@ struct SettingsScreen: View {
     @State private var launchAtLogin = LaunchAtLoginSetting()
     @State private var commandLineTool = CommandLineToolInstaller()
     @AppStorage(TotalSpendSetting.key) private var showTotalSpend = true
+    @AppStorage(ClaudeDesktopImportSetting.key) private var importClaudeDesktopLogin = ClaudeDesktopImportSetting.fallback
     @AppStorage(AppearanceSetting.key) private var appearance = AppearanceSetting.system
     @AppStorage(TimeFormatSetting.key) private var timeFormat = TimeFormatSetting.auto
     @AppStorage(DensitySetting.key) private var density = DensitySetting.regular
@@ -108,6 +109,15 @@ struct SettingsScreen: View {
             }
             if let launchAtLoginError = launchAtLogin.errorMessage {
                 inlineNotice(launchAtLoginError)
+            }
+            // Off by default: the Desktop login costs one Keychain prompt per rebuilt app, and Claude's
+            // meters already work from the Claude Code login. See `ClaudeDesktopImportSetting`.
+            row("Import Claude Desktop Login") {
+                Toggle("", isOn: $importClaudeDesktopLogin)
+                    .settingsSwitchStyle()
+            }
+            if importClaudeDesktopLogin {
+                inlineNotice("macOS asks for your Keychain password every time this app is updated while this is on.")
             }
             // Click-to-record field; its ⓧ clears the combo and disables the shortcut.
             row("Global Shortcut") {

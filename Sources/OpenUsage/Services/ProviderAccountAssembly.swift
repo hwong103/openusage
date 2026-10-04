@@ -53,7 +53,8 @@ struct ProviderAccountAssembly {
         return await make(
             observer: DefaultAccountObserver(),
             accountsStore: ProviderAccountsStore(defaults: defaults),
-            families: families
+            families: families,
+            allowsClaudeDesktopImport: ClaudeDesktopImportSetting.isEnabled(in: defaults)
         )
     }
 
@@ -74,6 +75,7 @@ struct ProviderAccountAssembly {
         accountsStore: ProviderAccountsStore,
         families: Set<String> = ProviderAccountID.families,
         desktop: ClaudeDesktopAuthStore? = nil,
+        allowsClaudeDesktopImport: Bool = true,
         listDesktopOrganizationDirectories: @escaping @Sendable (URL) -> [String] = { root in
             let urls = (try? FileManager.default.contentsOfDirectory(
                 at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
@@ -150,6 +152,7 @@ struct ProviderAccountAssembly {
         let desktopOrganizations = discoverDesktopOrganizations(
             desktop: desktop,
             cliIdentity: identityKeys["claude"],
+            allowsDesktopImport: allowsClaudeDesktopImport,
             listDirectories: listDesktopOrganizationDirectories
         )
         let desktopAnchor = desktop.homeDirectory()
@@ -263,8 +266,13 @@ struct ProviderAccountAssembly {
     private static func discoverDesktopOrganizations(
         desktop: ClaudeDesktopAuthStore,
         cliIdentity: String?,
+        allowsDesktopImport: Bool,
         listDirectories: @Sendable (URL) -> [String]
     ) -> [DesktopOrganization] {
+        // Discovering Desktop organizations means decrypting Desktop's cookie store, which needs the
+        // `Claude Safe Storage` Keychain item — a legacy item macOS re-authorizes per signed build. Only
+        // look when the user has opted in, so launching (and therefore updating) never prompts.
+        guard allowsDesktopImport else { return [] }
         guard let user = desktop.lastKnownAccountUUID(), desktop.hasCredentialMaterial() else { return [] }
         let active = desktop.load(allowInteraction: false, expectedAccountUUID: user)
         guard active.status != .signatureUnavailable else { return [] }

@@ -50,7 +50,11 @@ final class ClaudeProvider: ProviderRuntime {
 
     init(
         provider: Provider = ClaudeProvider.makeProvider(),
-        authStore: ClaudeAuthStore = ClaudeAuthStore(),
+        // The store default carries the Desktop-import choice too, so a caller that doesn't pass one can
+        // never re-introduce the Keychain prompt the setting exists to avoid.
+        authStore: ClaudeAuthStore = ClaudeAuthStore(
+            desktopImportEnabled: { ClaudeDesktopImportSetting.isEnabled }
+        ),
         usageClient: ClaudeUsageClient = ClaudeUsageClient(),
         logUsageScanner: ClaudeLogUsageScanner = ClaudeLogUsageScanner(),
         allowsUnattributedPiUsage: Bool = true,

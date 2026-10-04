@@ -146,6 +146,74 @@ final class ClaudeDesktopAuthStoreTests: XCTestCase {
         XCTAssertTrue(fixture.keyReader.calls.isEmpty)
     }
 
+    /// Off by default: with no usable Claude Code login, the credential load still must not open Claude
+    /// Desktop's Keychain item, because macOS re-asks for the Keychain password after every rebuild of a
+    /// self-signed app and the prompt can't be suppressed for a legacy item.
+    func testCredentialLoadSkipsDesktopKeychainUnlessImportIsEnabled() throws {
+        let fixture = try makeFixture(
+            activeOrganization: organization,
+            v2: [cacheKey(organization: organization): tokenEntry("desktop-token", expiresIn: 3_600)],
+            accountUUID: accountUUID
+        )
+        let off = makeAuthStore(fixture, desktopImportEnabled: { false })
+            .loadCredentialSet()
+        XCTAssertEqual(off.desktopStatus, .notChecked)
+        XCTAssertTrue(off.candidates.isEmpty)
+        XCTAssertTrue(fixture.keyReader.calls.isEmpty)
+
+        let on = makeAuthStore(fixture, desktopImportEnabled: { true })
+            .loadCredentialSet()
+        XCTAssertEqual(fixture.keyReader.calls, [false])
+        XCTAssertEqual(on.desktopStatus, .available)
+        XCTAssertEqual(on.candidates.map(\.source), [.desktop])
+    }
+
+    /// The launch pass that discovers Desktop organizations is the one that used to prompt on every
+    /// update, so it takes the same gate.
+    @MainActor
+    func testDesktopOrganizationDiscoverySkipsTheKeychainUnlessImportIsEnabled() async throws {
+        let fixture = try makeFixture(
+            activeOrganization: organization,
+            v2: [cacheKey(organization: organization): tokenEntry("desktop-token", expiresIn: 3_600)],
+            accountUUID: accountUUID
+        )
+        let suite = "OpenUsageTests.DesktopImportGate.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fixtureHome = home
+        let observer = DefaultAccountObserver(
+            environment: FakeEnvironment(), files: fixture.files, keychain: FakeKeychain(),
+            homeDirectory: { fixtureHome }
+        )
+        let organizations = [organization]
+
+        _ = await ProviderAccountAssembly.make(
+            observer: observer, accountsStore: ProviderAccountsStore(defaults: defaults),
+            families: ["codex"], desktop: fixture.store,
+            allowsClaudeDesktopImport: false,
+            listDesktopOrganizationDirectories: { _ in organizations }
+        )
+        XCTAssertTrue(fixture.keyReader.calls.isEmpty)
+
+        _ = await ProviderAccountAssembly.make(
+            observer: observer, accountsStore: ProviderAccountsStore(defaults: defaults),
+            families: ["codex"], desktop: fixture.store,
+            allowsClaudeDesktopImport: true,
+            listDesktopOrganizationDirectories: { _ in organizations }
+        )
+        XCTAssertEqual(fixture.keyReader.calls, [false])
+    }
+
+    func testClaudeDesktopImportDefaultsOff() throws {
+        let suite = "OpenUsageTests.DesktopImportDefault.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertFalse(ClaudeDesktopImportSetting.isEnabled(in: defaults))
+        defaults.set(true, forKey: ClaudeDesktopImportSetting.key)
+        XCTAssertTrue(ClaudeDesktopImportSetting.isEnabled(in: defaults))
+    }
+
     @MainActor
     func testOrganizationSwitchKeepsPersistedCardIDsAndDistinctScopedRuntimes() async throws {
         let fixture = try makeFixture(

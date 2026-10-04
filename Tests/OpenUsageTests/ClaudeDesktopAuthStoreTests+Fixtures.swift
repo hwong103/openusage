@@ -15,7 +15,8 @@ extension ClaudeDesktopAuthStoreTests {
         environment: [String: String] = ["CLAUDE_CONFIG_DIR": "/tmp/claude"],
         keychainJSON: String? = nil,
         files: FakeFiles? = nil,
-        keychain: (any KeychainAccessing)? = nil
+        keychain: (any KeychainAccessing)? = nil,
+        desktopImportEnabled: @escaping @Sendable () -> Bool = { true }
     ) -> ClaudeAuthStore {
         let now = now
         return ClaudeAuthStore(
@@ -23,6 +24,7 @@ extension ClaudeDesktopAuthStoreTests {
             files: files ?? fixture.files,
             keychain: keychain ?? FakeKeychain(keychainJSON),
             desktop: fixture.store,
+            desktopImportEnabled: desktopImportEnabled,
             now: { now }
         )
     }
