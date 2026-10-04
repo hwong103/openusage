@@ -170,7 +170,12 @@ final class CommandCodeProviderTests: XCTestCase {
         ])
         XCTAssertEqual(snapshot.plan, "GOAT")
         XCTAssertNil(snapshot.errorCategory)
-        XCTAssertEqual(snapshot.lines.map(\.label), ["Session", "Weekly", "Monthly", "Requests", "Balance"])
+        // This stub answers every summary window with the same period body, so Today and Last 30 Days
+        // both carry it and Yesterday's overlap is empty. `testSpendWindowsDriveTheSharedSpendTiles`
+        // covers the real per-window shaping.
+        XCTAssertEqual(snapshot.lines.map(\.label), [
+            "Session", "Weekly", "Monthly", "Requests", "Balance", "Today", "Last 30 Days"
+        ])
         for request in http.requests.dropFirst() {
             XCTAssertEqual(commandCodeQuery(request.url)["orgId"], "org-42")
         }
@@ -213,7 +218,7 @@ final class CommandCodeProviderTests: XCTestCase {
             XCTAssertEqual(values.map(\.kind), [.dollars, .count])
             // Billed credits, not a local estimate — the ring must not flag Command Code with the ⓘ.
             XCTAssertEqual(values.map(\.estimated), [false, false])
-            XCTAssertEqual(values.map(\.label), [nil, "tokens"])
+            XCTAssertEqual(values.map(\.label), [nil, "tokens"] as [String?])
         }
     }
 
@@ -308,10 +313,6 @@ private enum CommandCodeFixtures {
         Data(#"""
         {"success":true,"data":{"status":"active","currentPeriodStart":"\#(periodStart)","currentPeriodEnd":"\#(periodEnd)","planId":"individual-goat"}}
         """#.utf8)
-    }
-
-    static func summary() -> Data {
-        summary(totalCount: 18_895)
     }
 
     static func summary(
