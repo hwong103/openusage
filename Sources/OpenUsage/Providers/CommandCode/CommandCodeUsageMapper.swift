@@ -191,7 +191,9 @@ enum CommandCodeUsageMapper {
         return lines
     }
 
-    private static func spendTotal(from body: Data) throws -> CommandCodeSpendTotal {
+    /// One `/alpha/usage/summary` response as a spend total — shared by the spend tiles and the Usage
+    /// Trend's day-differencing, so both read a "day value" the same way.
+    static func spendTotal(from body: Data) throws -> CommandCodeSpendTotal {
         let summary: UsageSummaryPayload = try decode(body)
         return CommandCodeSpendTotal(
             costUSD: try nonnegative(summary.totalCost ?? 0),

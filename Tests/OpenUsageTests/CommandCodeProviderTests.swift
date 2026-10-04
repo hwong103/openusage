@@ -148,6 +148,16 @@ final class CommandCodeUsageMapperTests: XCTestCase {
 
 @MainActor
 final class CommandCodeProviderTests: XCTestCase {
+    private var createdDirectories: [URL] = []
+
+    override func tearDown() {
+        for directory in createdDirectories {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        createdDirectories = []
+        super.tearDown()
+    }
+
     func testSuccessfulRefreshUsesOrganizationAndPeriodSummary() async {
         let http = RoutingHTTPClient { request in
             switch request.url.path {
@@ -165,7 +175,7 @@ final class CommandCodeProviderTests: XCTestCase {
         XCTAssertEqual(provider.provider.displayName, "Command Code")
         XCTAssertEqual(provider.widgetDescriptors.map(\.id), [
             "commandcode.session", "commandcode.weekly", "commandcode.monthly",
-            "commandcode.balance", "commandcode.requests",
+            "commandcode.balance", "commandcode.requests", "commandcode.trend",
             "commandcode.today", "commandcode.yesterday", "commandcode.last30"
         ])
         XCTAssertEqual(snapshot.plan, "GOAT")
@@ -174,7 +184,7 @@ final class CommandCodeProviderTests: XCTestCase {
         // both carry it and Yesterday's overlap is empty. `testSpendWindowsDriveTheSharedSpendTiles`
         // covers the real per-window shaping.
         XCTAssertEqual(snapshot.lines.map(\.label), [
-            "Session", "Weekly", "Monthly", "Requests", "Balance", "Today", "Last 30 Days"
+            "Session", "Weekly", "Monthly", "Requests", "Balance", "Today", "Last 30 Days", "Usage Trend"
         ])
         for request in http.requests.dropFirst() {
             XCTAssertEqual(commandCodeQuery(request.url)["orgId"], "org-42")
@@ -209,17 +219,24 @@ final class CommandCodeProviderTests: XCTestCase {
 
         XCTAssertNil(snapshot.errorCategory)
         XCTAssertNil(snapshot.warning)
-        XCTAssertEqual(snapshot.lines.suffix(3).map(\.label), ["Today", "Yesterday", "Last 30 Days"])
+        XCTAssertEqual(snapshot.lines[5...7].map(\.label), ["Today", "Yesterday", "Last 30 Days"])
         assertSpend(snapshot.lines[5], costUSD: 1.25, tokens: 135_000_000)
         assertSpend(snapshot.lines[6], costUSD: 2.25, tokens: 235_000_000)
         assertSpend(snapshot.lines[7], costUSD: 43.00, tokens: 7_000_000_000)
-        for line in snapshot.lines.suffix(3) {
+        for line in snapshot.lines[5...7] {
             guard case .values(_, let values, _, _, _, _) = line else { return XCTFail("Expected values line") }
             XCTAssertEqual(values.map(\.kind), [.dollars, .count])
             // Billed credits, not a local estimate — the ring must not flag Command Code with the ⓘ.
             XCTAssertEqual(values.map(\.estimated), [false, false])
             XCTAssertEqual(values.map(\.label), [nil, "tokens"] as [String?])
         }
+        // The persisted day series appends the Usage Trend row last, after the spend tiles.
+        guard case .chart(let label, let points, let note) = snapshot.lines.last else {
+            return XCTFail("Expected the Usage Trend chart last")
+        }
+        XCTAssertEqual(label, "Usage Trend")
+        XCTAssertEqual(note, "From Command Code's usage API")
+        XCTAssertTrue(points.contains { $0.value > 0 })
     }
 
     /// A failed spend window costs only its own row: the meters above it still render, and the user gets
@@ -286,9 +303,25 @@ final class CommandCodeProviderTests: XCTestCase {
                 environment: FakeEnvironment(["COMMAND_CODE_API_KEY": "env-key"])
             ),
             usageClient: CommandCodeUsageClient(http: http),
+            spendHistoryStore: makeSpendHistoryStore(),
             // Pinned so the spend windows land on fixed UTC-day floors rather than today's.
             now: { CommandCodeFixtures.spendNow }
         )
+    }
+
+    /// A store stamped for the pinned `spendNow`, so the provider skips its once-a-day 31-call backfill
+    /// and the test stays about the spend rows. The directory is a fresh temp dir, so no real history is
+    /// read or written.
+    private func makeSpendHistoryStore() -> CommandCodeSpendHistoryStore {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("openusage-cc-provider-\(UUID().uuidString)", isDirectory: true)
+        createdDirectories.append(directory)
+        let store = CommandCodeSpendHistoryStore(directory: directory)
+        store.merge(
+            dayTotals: [:],
+            backfillDay: CommandCodeSpendHistoryStore.utcDayKey(for: CommandCodeFixtures.spendNow)
+        )
+        return store
     }
 }
 

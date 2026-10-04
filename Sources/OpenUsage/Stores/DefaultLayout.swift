@@ -37,7 +37,7 @@ enum DefaultLayout {
         "copilot.chat", "copilot.completions",
 
         "commandcode.session", "commandcode.weekly", "commandcode.monthly",
-        "commandcode.balance", "commandcode.requests",
+        "commandcode.balance", "commandcode.requests", "commandcode.trend",
         "commandcode.today", "commandcode.yesterday", "commandcode.last30",
 
         "devin.daily", "devin.weekly", "devin.extra",
@@ -122,7 +122,8 @@ enum DefaultLayout {
         // Command Code's Balance is the actual credit left on the account (the value that runs out and
         // has to be topped up), so it stays above the fold next to Session. Weekly, Monthly, and
         // Requests are secondary detail and sit below the caret, along with the spend-history rows
-        // every other spend-tracking provider also keeps behind the caret.
+        // every other spend-tracking provider also keeps behind the caret. The Usage Trend row joins
+        // Session and Balance above the fold, matching every other provider that draws one.
         "commandcode.weekly", "commandcode.monthly", "commandcode.requests",
         "commandcode.today", "commandcode.yesterday", "commandcode.last30",
         "devin.extra",

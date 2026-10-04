@@ -28,7 +28,7 @@ enum SpendTileMapper {
         fallbackPricingModelsByDay: [String: Set<String>]? = nil
     ) {
         let today = dayKey(from: now)
-        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now).map(dayKey(from:))
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now).map { dayKey(from: $0) }
 
         if let entry = usage.daily.first(where: { dayKey(fromUsageDate: $0.date) == today }), hasUsage(entry) {
             lines.append(dayUsageLine(label: "Today", entry: entry, estimated: estimated,
@@ -84,14 +84,20 @@ enum SpendTileMapper {
     /// that day. Tokens are always measured (no estimate flag), so the chart needs only the per-day
     /// counts plus a source note. Appends nothing when the whole window is idle, so a source with no
     /// usage leaves "No data" rather than a flat row of zero bars.
+    ///
+    /// `calendar` is the day axis the bars are keyed, zero-filled, and labelled on. It defaults to the
+    /// local calendar the log-scanned providers count in; Command Code passes its UTC calendar so the
+    /// chart is the same continuous UTC series as its own spend rows instead of a local-day axis reading
+    /// UTC-keyed data (which draws the newest bar empty and shifts every other bar a day).
     static func appendUsageTrend(
         _ usage: DailyUsageSeries, to lines: inout [MetricLine], now: Date = Date(), note: String,
-        fallbackPricingModelsByDay: [String: Set<String>]? = nil
+        fallbackPricingModelsByDay: [String: Set<String>]? = nil,
+        calendar: Calendar = .current
     ) {
-        let points = trendPoints(usage, now: now)
+        let points = trendPoints(usage, now: now, calendar: calendar)
         guard !points.isEmpty else { return }
-        let days = Set(usage.daily.compactMap { dayKey(fromUsageDate: $0.date) })
-            .intersection(UsageHistoryWindow.dayKeys(through: now))
+        let days = Set(usage.daily.compactMap { dayKey(fromUsageDate: $0.date, calendar: calendar) })
+            .intersection(UsageHistoryWindow.dayKeys(through: now, calendar: calendar))
         let sourceNote = PricingFallbackOption.sourceNote(note, modelsByDay: fallbackPricingModelsByDay, days: days)
         lines.append(.chart(label: "Usage Trend", points: points, note: sourceNote))
     }
@@ -102,36 +108,38 @@ enum SpendTileMapper {
     /// zero-filled, not dropped, so the sparkline stays calendar-true: a gap shows as a short bar in
     /// place instead of collapsing two non-adjacent days into neighbors, and the cap is calendar days,
     /// not active ones. Returns empty when nothing was used in the window — there's no trend to draw.
-    /// Each point carries a "Jun 21" axis label and a pre-formatted "222M tokens" readout.
-    private static func trendPoints(_ usage: DailyUsageSeries, now: Date) -> [MetricChartPoint] {
+    /// Each point carries a "Jun 21" axis label and a pre-formatted "222M tokens" readout; both the day
+    /// key and the label come from `calendar`, so the axis never mixes a UTC key with a local label.
+    private static func trendPoints(_ usage: DailyUsageSeries, now: Date, calendar: Calendar) -> [MetricChartPoint] {
         var tokensByDay: [String: Double] = [:]
         for day in usage.daily {
             let tokens = Double(day.totalTokens)
-            guard tokens.isFinite, tokens >= 0, let key = dayKey(fromUsageDate: day.date) else { continue }
+            guard tokens.isFinite, tokens >= 0, let key = dayKey(fromUsageDate: day.date, calendar: calendar)
+            else { continue }
             tokensByDay[key, default: 0] += tokens
         }
         guard tokensByDay.values.contains(where: { $0 > 0 }) else { return [] }
 
-        let calendar = Calendar.current
         let today = calendar.startOfDay(for: now)
         return (0...UsageHistoryWindow.previousDays).reversed().compactMap { offset -> MetricChartPoint? in
             guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
-            let key = dayKey(from: day)
+            let key = dayKey(from: day, calendar: calendar)
             let tokens = tokensByDay[key] ?? 0
             return MetricChartPoint(
                 value: tokens,
-                // The app's localized "Jun 21" month/day, not a hardcoded "6/21".
-                label: Formatters.monthDayLabel(day),
+                // The app's localized "Jun 21" month/day, not a hardcoded "6/21" — rendered in the axis
+                // calendar's zone so a UTC-midnight day doesn't print as the previous local date.
+                label: Formatters.monthDayLabel(day, timeZone: calendar.timeZone),
                 valueLabel: MetricFormatter.number(tokens, kind: .count, style: .row) + " tokens"
             )
         }
     }
 
-    private static func dayKey(from date: Date) -> String {
-        DailyUsageAccumulator.dayKey(from: date)
+    private static func dayKey(from date: Date, calendar: Calendar = .current) -> String {
+        DailyUsageAccumulator.dayKey(from: date, calendar: calendar)
     }
 
-    private static func dayKey(fromUsageDate rawDate: String) -> String? {
+    private static func dayKey(fromUsageDate rawDate: String, calendar: Calendar = .current) -> String? {
         let value = rawDate.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
 
@@ -140,7 +148,7 @@ enum SpendTileMapper {
         }
 
         if let date = OpenUsageISO8601.date(from: value) {
-            return dayKey(from: date)
+            return dayKey(from: date, calendar: calendar)
         }
 
         if let match = value.range(of: #"^\d{4}-\d{2}-\d{2}"#, options: .regularExpression) {
@@ -157,7 +165,7 @@ enum SpendTileMapper {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "MMM dd, yyyy"
         if let date = formatter.date(from: value) {
-            return dayKey(from: date)
+            return dayKey(from: date, calendar: calendar)
         }
 
         return nil

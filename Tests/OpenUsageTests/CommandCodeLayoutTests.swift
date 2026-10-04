@@ -9,6 +9,7 @@ final class CommandCodeLayoutTests: XCTestCase {
         "commandcode.monthly",
         "commandcode.balance",
         "commandcode.requests",
+        "commandcode.trend",
         "commandcode.today",
         "commandcode.yesterday",
         "commandcode.last30"
@@ -21,6 +22,9 @@ final class CommandCodeLayoutTests: XCTestCase {
         for id in ["commandcode.session", "commandcode.balance"] {
             XCTAssertFalse(DefaultLayout.expandedMetricIDs.contains(id), "\(id) should be always visible")
         }
+        // The Usage Trend row ships above the fold, matching every other provider that draws one.
+        XCTAssertTrue(DefaultLayout.metricIDs.contains("commandcode.trend"), "commandcode.trend should be enabled")
+        XCTAssertFalse(DefaultLayout.expandedMetricIDs.contains("commandcode.trend"), "commandcode.trend should be always visible")
         for id in [
             "commandcode.weekly", "commandcode.monthly", "commandcode.requests",
             "commandcode.today", "commandcode.yesterday", "commandcode.last30"

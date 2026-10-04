@@ -17,8 +17,12 @@ enum Formatters {
 
     /// The app's compact month/day, e.g. "Jun 21" — localized, no year. Shared so every short calendar
     /// date (reset deadlines, the Usage Trend axis) reads the same and changes in one place.
-    static func monthDayLabel(_ date: Date) -> String {
-        date.formatted(.dateTime.month(.abbreviated).day())
+    /// `timeZone` defaults to the system zone; the Usage Trend axis passes its own calendar's zone so a
+    /// UTC-midnight day is labelled with the UTC date rather than the previous local one.
+    static func monthDayLabel(_ date: Date, timeZone: TimeZone = .current) -> String {
+        var style = Date.FormatStyle.dateTime.month(.abbreviated).day()
+        style.timeZone = timeZone
+        return date.formatted(style)
     }
 
     /// The one mode-aware deadline phrase, shared by every "<verb> + when" label (reset countdowns,
