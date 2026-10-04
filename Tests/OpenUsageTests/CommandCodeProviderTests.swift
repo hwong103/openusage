@@ -165,7 +165,8 @@ final class CommandCodeProviderTests: XCTestCase {
         XCTAssertEqual(provider.provider.displayName, "Command Code")
         XCTAssertEqual(provider.widgetDescriptors.map(\.id), [
             "commandcode.session", "commandcode.weekly", "commandcode.monthly",
-            "commandcode.balance", "commandcode.requests"
+            "commandcode.balance", "commandcode.requests",
+            "commandcode.today", "commandcode.yesterday", "commandcode.last30"
         ])
         XCTAssertEqual(snapshot.plan, "GOAT")
         XCTAssertNil(snapshot.errorCategory)
@@ -173,6 +174,67 @@ final class CommandCodeProviderTests: XCTestCase {
         for request in http.requests.dropFirst() {
             XCTAssertEqual(commandCodeQuery(request.url)["orgId"], "org-42")
         }
+    }
+
+    /// The billing API exposes only a cumulative-from-`since` total, snapped to a UTC day, so the three
+    /// spend rows are built from three windows and yesterday comes out of the overlap.
+    func testSpendWindowsDriveTheSharedSpendTiles() async {
+        let http = RoutingHTTPClient { request in
+            switch request.url.path {
+            case "/alpha/whoami": .commandCodeOK(CommandCodeFixtures.whoami())
+            case "/alpha/billing/credits": .commandCodeOK(CommandCodeFixtures.credits())
+            case "/alpha/billing/subscriptions": .commandCodeOK(CommandCodeFixtures.subscription())
+            case "/alpha/usage/summary":
+                switch commandCodeQuery(request.url)["since"] ?? "" {
+                case CommandCodeFixtures.periodStart:
+                    .commandCodeOK(CommandCodeFixtures.summary())
+                case "2026-10-04T00:00:00.000Z":
+                    .commandCodeOK(CommandCodeFixtures.summary(totalCost: 1.25, totalTokens: 135_000_000))
+                case "2026-10-03T00:00:00.000Z":
+                    .commandCodeOK(CommandCodeFixtures.summary(totalCost: 3.50, totalTokens: 370_000_000))
+                case "2026-09-04T00:00:00.000Z":
+                    .commandCodeOK(CommandCodeFixtures.summary(totalCost: 43.00, totalTokens: 7_000_000_000))
+                default:
+                    HTTPResponse(statusCode: 404, headers: [:], body: Data())
+                }
+            default: HTTPResponse(statusCode: 404, headers: [:], body: Data())
+            }
+        }
+        let snapshot = await makeProvider(http: http).refresh()
+
+        XCTAssertNil(snapshot.errorCategory)
+        XCTAssertNil(snapshot.warning)
+        XCTAssertEqual(snapshot.lines.suffix(3).map(\.label), ["Today", "Yesterday", "Last 30 Days"])
+        assertSpend(snapshot.lines[5], costUSD: 1.25, tokens: 135_000_000)
+        assertSpend(snapshot.lines[6], costUSD: 2.25, tokens: 235_000_000)
+        assertSpend(snapshot.lines[7], costUSD: 43.00, tokens: 7_000_000_000)
+        for line in snapshot.lines.suffix(3) {
+            guard case .values(_, let values, _, _, _, _) = line else { return XCTFail("Expected values line") }
+            XCTAssertEqual(values.map(\.kind), [.dollars, .count])
+            // Billed credits, not a local estimate — the ring must not flag Command Code with the ⓘ.
+            XCTAssertEqual(values.map(\.estimated), [false, false])
+            XCTAssertEqual(values.map(\.label), [nil, "tokens"])
+        }
+    }
+
+    /// A failed spend window costs only its own row: the meters above it still render, and the user gets
+    /// a warning instead of a silently short ring.
+    func testMissingSpendWindowDropsRowsAndWarns() async {
+        let http = RoutingHTTPClient { request in
+            switch request.url.path {
+            case "/alpha/whoami": .commandCodeOK(CommandCodeFixtures.whoami())
+            case "/alpha/billing/credits": .commandCodeOK(CommandCodeFixtures.credits())
+            case "/alpha/billing/subscriptions": .commandCodeOK(CommandCodeFixtures.subscription())
+            case "/alpha/usage/summary" where commandCodeQuery(request.url)["since"] == CommandCodeFixtures.periodStart:
+                .commandCodeOK(CommandCodeFixtures.summary())
+            default: HTTPResponse(statusCode: 500, headers: [:], body: Data())
+            }
+        }
+        let snapshot = await makeProvider(http: http).refresh()
+
+        XCTAssertNil(snapshot.errorCategory)
+        XCTAssertEqual(snapshot.lines.map(\.label), ["Session", "Weekly", "Monthly", "Requests", "Balance"])
+        XCTAssertEqual(snapshot.warning, "Couldn't read Command Code spend history.")
     }
 
     func testNoCredentialsAndUnauthorizedHaveDistinctErrors() async {
@@ -218,7 +280,9 @@ final class CommandCodeProviderTests: XCTestCase {
                 files: FakeFiles(),
                 environment: FakeEnvironment(["COMMAND_CODE_API_KEY": "env-key"])
             ),
-            usageClient: CommandCodeUsageClient(http: http)
+            usageClient: CommandCodeUsageClient(http: http),
+            // Pinned so the spend windows land on fixed UTC-day floors rather than today's.
+            now: { CommandCodeFixtures.spendNow }
         )
     }
 }
@@ -226,6 +290,8 @@ final class CommandCodeProviderTests: XCTestCase {
 private enum CommandCodeFixtures {
     static let periodStart = "2026-08-29T00:08:17.000Z"
     static let periodEnd = "2026-09-29T00:08:17.000Z"
+    /// 2026-10-04T06:10:00Z, so the spend windows are 10-04, 10-03, and 09-04.
+    static let spendNow = Date(timeIntervalSince1970: 1_791_094_200)
 
     static func whoami(orgID: String? = nil) -> Data {
         let org = orgID.map { #","org":{"id":"\#($0)"}"# } ?? ""
@@ -245,8 +311,18 @@ private enum CommandCodeFixtures {
     }
 
     static func summary() -> Data {
+        summary(totalCount: 18_895)
+    }
+
+    static func summary(
+        totalCount: Double = 18_895,
+        totalCost: Double = 74.906867302,
+        totalTokens: Double = 425_374_525,
+        totalMonthlyCredits: Double = 70,
+        totalPurchasedCredits: Double = 4.906867302
+    ) -> Data {
         Data(#"""
-        {"totalCount":18895,"totalCost":74.906867302,"totalMonthlyCredits":70,"totalPurchasedCredits":4.906867302,"totalFreeCredits":0}
+        {"totalCount":\#(totalCount),"totalCost":\#(totalCost),"totalTokens":\#(totalTokens),"totalMonthlyCredits":\#(totalMonthlyCredits),"totalPurchasedCredits":\#(totalPurchasedCredits),"totalFreeCredits":0}
         """#.utf8)
     }
 }
@@ -281,6 +357,15 @@ private func assertValue(_ line: MetricLine, number: Double, kind: MetricKind) {
     XCTAssertNotNil(value)
     XCTAssertEqual(value?.number ?? -1, number, accuracy: 0.000001)
     XCTAssertEqual(value?.kind, kind)
+}
+
+private func assertSpend(_ line: MetricLine, costUSD: Double, tokens: Double) {
+    guard case .values(_, let values, _, _, _, _) = line else {
+        return XCTFail("Expected values line")
+    }
+    XCTAssertEqual(values.count, 2)
+    XCTAssertEqual(values.first?.number ?? -1, costUSD, accuracy: 0.000001)
+    XCTAssertEqual(values.last?.number ?? -1, tokens, accuracy: 0.5)
 }
 
 private extension HTTPResponse {

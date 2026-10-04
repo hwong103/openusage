@@ -13,6 +13,42 @@ struct CommandCodeSubscriptionContext: Equatable, Sendable {
     var periodDurationMs: Int
 }
 
+/// One spend window's totals as the billing API reports them: billed credits and the tokens behind
+/// them. Both come from the same `/alpha/usage/summary` response, so a slice's dollar rate and the
+/// ring's center stay consistent with the tokens they were computed from.
+struct CommandCodeSpendTotal: Equatable, Sendable {
+    var costUSD: Double
+    var tokens: Double
+
+    /// A window counts as used when it spent credits, used tokens, or both. An untouched day is idle,
+    /// not `$0.00`.
+    var hasUsage: Bool { costUSD > 0 || tokens > 0 }
+
+    /// Previous-window total minus this one. Windows are cumulative from their own floor, so no single
+    /// day can be requested directly; a one-day window is the difference of two overlapping floors.
+    /// Clamped at zero so a request that lands in the next bucket (or clock skew) can't render a
+    /// negative day.
+    func subtracting(_ other: CommandCodeSpendTotal) -> CommandCodeSpendTotal {
+        CommandCodeSpendTotal(
+            costUSD: max(0, costUSD - other.costUSD),
+            tokens: max(0, tokens - other.tokens)
+        )
+    }
+}
+
+/// The three cumulative summary windows behind the shared spend tiles. `/alpha/usage/summary` takes
+/// only a floor (`since`): it ignores `until` and snaps the instant to a UTC calendar day. So the tiles
+/// are UTC-day aligned — `today` is cumulative from 00:00 UTC today, `sinceYesterday` from 00:00 UTC
+/// yesterday, `sinceLast30Days` from 00:00 UTC thirty days back — and yesterday is the difference of
+/// the first two. A `nil` window means that call failed or the account has no usage there.
+struct CommandCodeSpendWindows: Equatable, Sendable {
+    var today: Data?
+    var sinceYesterday: Data?
+    var sinceLast30Days: Data?
+
+    static let none = CommandCodeSpendWindows()
+}
+
 enum CommandCodeUsageMapper {
     private static let usableSubscriptionStatuses = Set(["active", "trialing", "past_due"])
     private static let planNames: [String: String] = [
@@ -65,7 +101,8 @@ enum CommandCodeUsageMapper {
     static func map(
         creditsBody: Data,
         summaryBody: Data?,
-        subscription: CommandCodeSubscriptionContext?
+        subscription: CommandCodeSubscriptionContext?,
+        spendWindows: CommandCodeSpendWindows = .none
     ) throws -> CommandCodeMappedUsage {
         let credits: CreditsPayload = try decode(creditsBody)
         let summary = try summaryBody.map { try decode(UsageSummaryPayload.self, from: $0) }
@@ -123,8 +160,52 @@ enum CommandCodeUsageMapper {
                 values: [MetricValue(number: balance, kind: .dollars)]
             ))
         }
+        lines.append(contentsOf: try spendLines(from: spendWindows))
         MetricLine.appendNoDataIfNeeded(&lines)
         return CommandCodeMappedUsage(plan: subscription?.planName, lines: lines)
+    }
+
+    /// The shared Today / Yesterday / Last 30 Days spend rows (see `WidgetDescriptor.spendTiles`).
+    /// These dollars are credits Command Code actually billed, so they carry no local-estimate marker
+    /// the way the log-scanned providers' imputed costs do. A window with no usage appends nothing,
+    /// leaving its tile on "No data" rather than a confident `$0.00 · 0 tokens` that would contradict a
+    /// live session meter.
+    static func spendLines(from windows: CommandCodeSpendWindows) throws -> [MetricLine] {
+        let today = try windows.today.map(spendTotal(from:))
+        let sinceYesterday = try windows.sinceYesterday.map(spendTotal(from:))
+        let last30 = try windows.sinceLast30Days.map(spendTotal(from:))
+
+        var lines: [MetricLine] = []
+        if let today, today.hasUsage {
+            lines.append(spendLine(label: "Today", total: today))
+        }
+        if let today, let sinceYesterday {
+            let yesterday = sinceYesterday.subtracting(today)
+            if yesterday.hasUsage {
+                lines.append(spendLine(label: "Yesterday", total: yesterday))
+            }
+        }
+        if let last30, last30.hasUsage {
+            lines.append(spendLine(label: "Last 30 Days", total: last30))
+        }
+        return lines
+    }
+
+    private static func spendTotal(from body: Data) throws -> CommandCodeSpendTotal {
+        let summary: UsageSummaryPayload = try decode(body)
+        return CommandCodeSpendTotal(
+            costUSD: try nonnegative(summary.totalCost ?? 0),
+            tokens: try nonnegative(summary.totalTokens ?? 0)
+        )
+    }
+
+    /// Same shape `SpendTileMapper` builds for the other providers — billed dollars first, then the
+    /// measured token count — so the row reads "$4.08 · 1.2M tokens" and the ring can size either.
+    private static func spendLine(label: String, total: CommandCodeSpendTotal) -> MetricLine {
+        .values(label: label, values: [
+            MetricValue(number: total.costUSD, kind: .dollars),
+            MetricValue(number: total.tokens, kind: .count, label: "tokens")
+        ])
     }
 
     static func planName(for planID: String) -> String {
@@ -307,5 +388,7 @@ fileprivate struct WindowPayload: Decodable {
 
 fileprivate struct UsageSummaryPayload: Decodable {
     fileprivate var totalCount: Double?
+    fileprivate var totalCost: Double?
+    fileprivate var totalTokens: Double?
     fileprivate var totalMonthlyCredits: Double?
 }

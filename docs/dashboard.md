@@ -16,7 +16,7 @@ A provider card can also show **quick-link buttons** pinned at the bottom of its
 
 ## Total Spend
 
-When any enabled provider tracks daily spend (Claude, Codex, Cursor, Grok, or OpenCode), a card sits above the provider sections. The title is a pull-down menu for **Cost**, **Cost/MTok**, or **Tokens** (Cost is the default; the choice sticks across restarts). A capsule switcher flips the period between **Today**, **Yesterday**, and **30 Days**. The ring, center total, and ranked legend follow the selected metric:
+When any enabled provider tracks daily spend (Claude, Codex, Command Code, Cursor, Grok, or OpenCode), a card sits above the provider sections. The title is a pull-down menu for **Cost**, **Cost/MTok**, or **Tokens** (Cost is the default; the choice sticks across restarts). A capsule switcher flips the period between **Today**, **Yesterday**, and **30 Days**. The ring, center total, and ranked legend follow the selected metric:
 
 - **Cost** — each segment is that provider's share of combined dollars (biggest spender first).
 - **Cost/MTok** — each segment is sized by that provider's dollars-per-million-tokens rate; the center is the blended rate across providers that have both spend and tokens; the legend lists each provider's own rate.

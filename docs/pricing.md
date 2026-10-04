@@ -1,6 +1,6 @@
 # Model Pricing
 
-How OpenUsage turns token counts into the estimated dollars on the Claude, Codex, Cursor, and Grok spend tiles. Grok uses the cost recorded in its session logs when available and only estimates older turns without one. OpenRouter and OpenCode do not use these estimates because their sources already report the cost directly.
+How OpenUsage turns token counts into the estimated dollars on the Claude, Codex, Cursor, and Grok spend tiles. Grok uses the cost recorded in its session logs when available and only estimates older turns without one. OpenRouter, OpenCode, and Command Code do not use these estimates because their sources already report the cost directly — Command Code's tiles carry the credits its own billing API charged, so they never show the local-estimate marker.
 
 ## Where prices come from
 

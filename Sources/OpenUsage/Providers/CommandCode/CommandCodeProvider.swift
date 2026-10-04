@@ -64,7 +64,7 @@ final class CommandCodeProvider: ProviderRuntime {
                 traySuffix: "requests"
             )
             .exportingLimit("requests", unit: "requests", source: .value(kind: .count))
-        ]
+        ] + WidgetDescriptor.spendTiles(provider: provider)
     }
 
     func hasLocalCredentials() async -> Bool {
@@ -131,10 +131,14 @@ final class CommandCodeProvider: ProviderRuntime {
                 summary = nil
             }
 
+            let spend = await spendWindows(apiKey: auth.apiKey, organizationID: organizationID)
+            if let warning = spend.warning { warnings.append(warning) }
+
             let mapped = try CommandCodeUsageMapper.map(
                 creditsBody: credits,
                 summaryBody: summary,
-                subscription: subscription
+                subscription: subscription,
+                spendWindows: spend.windows
             )
             return ProviderSnapshot.make(
                 provider: provider,
@@ -145,6 +149,51 @@ final class CommandCodeProvider: ProviderRuntime {
             )
         } catch {
             return ProviderSnapshot.error(provider: provider, error: error)
+        }
+    }
+
+    /// The three cumulative summary windows backing the shared spend tiles. Each is one extra
+    /// `/alpha/usage/summary` call, so they run together; a failure drops that window's row (and adds a
+    /// warning) instead of failing the provider — the quota meters are still the important reading.
+    private func spendWindows(
+        apiKey: String,
+        organizationID: String?
+    ) async -> (windows: CommandCodeSpendWindows, warning: String?) {
+        // One clock reading for all three floors, so the windows can't straddle a UTC midnight.
+        let asOf = now()
+        async let today = summaryWindow(apiKey: apiKey, organizationID: organizationID, offsetDays: 0, now: asOf)
+        async let sinceYesterday = summaryWindow(apiKey: apiKey, organizationID: organizationID, offsetDays: 1, now: asOf)
+        async let sinceLast30Days = summaryWindow(apiKey: apiKey, organizationID: organizationID, offsetDays: 30, now: asOf)
+        let (todayBody, yesterdayBody, last30Body) = await (today, sinceYesterday, sinceLast30Days)
+
+        let failed = todayBody == nil || yesterdayBody == nil || last30Body == nil
+        return (
+            CommandCodeSpendWindows(
+                today: todayBody,
+                sinceYesterday: yesterdayBody,
+                sinceLast30Days: last30Body
+            ),
+            failed ? "Couldn't read Command Code spend history." : nil
+        )
+    }
+
+    private func summaryWindow(
+        apiKey: String,
+        organizationID: String?,
+        offsetDays: Int,
+        now: Date
+    ) async -> Data? {
+        do {
+            return try await load {
+                try await usageClient.fetchUsageSummary(
+                    apiKey: apiKey,
+                    organizationID: organizationID,
+                    since: CommandCodeSpendWindow.since(offsetDays: offsetDays, from: now)
+                )
+            }
+        } catch {
+            AppLog.warn(.refresh, "Command Code spend window failed (\(error.localizedDescription))")
+            return nil
         }
     }
 

@@ -11,9 +11,20 @@ Tracks [Command Code](https://commandcode.ai/) subscription windows, balance, an
 | Monthly | Usage against the current billing-cycle credits |
 | Requests | Requests made during the current billing cycle |
 | Balance | Remaining plan, purchased, and free credits |
+| Today / Yesterday / Last 30 Days | Credits spent and tokens used in each window |
 
 Rows only appear when the account response contains usable data. OpenUsage also shows the plan reported
 by Command Code, including Go, Pro, GOAT, Max, Ultra, and Teams Pro.
+
+The spend rows feed the dashboard's Total Spend ring alongside Claude, Codex, Cursor, and Grok, so
+Command Code shows up as a slice of Cost, Cost/MTok, and Tokens.
+
+### About the day boundaries
+
+Command Code's usage API accepts only a start instant, and it rounds that instant down to a UTC calendar
+day. Its Today / Yesterday / Last 30 Days rows are therefore UTC days, while the log-scanned providers
+key their rows to your Mac's local calendar day. Outside UTC the two sets of boundaries don't line up
+exactly, which is a limitation of the API rather than a rounding choice.
 
 ## Where credentials come from
 
@@ -36,6 +47,9 @@ OpenUsage makes read-only `GET` requests to `https://api.commandcode.ai`:
 - `/alpha/billing/credits` returns balance and rolling window limits.
 - `/alpha/billing/subscriptions` returns the plan and billing period.
 - `/alpha/usage/summary?since=<ISO-8601-period-start>` returns request and monthly usage totals.
+- `/alpha/usage/summary?since=<ISO-8601-UTC-day-start>` supplies the Today, Yesterday, and Last 30 Days
+  spend windows (the latter from thirty UTC days back; Yesterday is the second minus the first, since
+  every window is cumulative from its own floor).
 
 The key is sent only to Command Code as a Bearer credential.
 

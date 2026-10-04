@@ -65,6 +65,31 @@ struct CommandCodeUsageClient: Sendable {
     }
 }
 
+/// UTC day floors for the Command Code spend windows.
+///
+/// `/alpha/usage/summary` accepts only a lower bound: `until` is ignored, and the `since` instant is
+/// snapped to a UTC calendar day (`2026-10-03T13:00Z` and `2026-10-03T00:00Z` return the same totals),
+/// so a single day can't be requested directly and the day boundary can't be moved. The log-scanned
+/// providers key their spend tiles to the local calendar day; Command Code's tiles are therefore
+/// UTC-day aligned, which shifts their boundary for users far from UTC. That is an API limitation, not
+/// a rounding choice — see `docs/providers/command-code.md`.
+enum CommandCodeSpendWindow {
+    /// The API rejects offsets such as `+11:00`, so windows are only expressible in UTC.
+    static let utcCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        return calendar
+    }()
+
+    /// Midnight UTC `offsetDays` before the UTC day containing `now`, as the ISO-8601 string the API
+    /// requires. `offsetDays: 0` is the start of today (UTC), `1` the start of yesterday.
+    static func since(offsetDays: Int, from now: Date, calendar: Calendar = utcCalendar) -> String {
+        let startOfDay = calendar.startOfDay(for: now)
+        let day = calendar.date(byAdding: .day, value: -offsetDays, to: startOfDay) ?? startOfDay
+        return OpenUsageISO8601.string(from: day)
+    }
+}
+
 enum CommandCodeUsageError: Error, LocalizedError, Equatable {
     case connectionFailed
     case invalidResponse

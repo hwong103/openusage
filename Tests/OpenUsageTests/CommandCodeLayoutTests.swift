@@ -8,7 +8,10 @@ final class CommandCodeLayoutTests: XCTestCase {
         "commandcode.weekly",
         "commandcode.monthly",
         "commandcode.balance",
-        "commandcode.requests"
+        "commandcode.requests",
+        "commandcode.today",
+        "commandcode.yesterday",
+        "commandcode.last30"
     ]
 
     func testCommandCodeDefaultsAndPlacement() {
@@ -18,7 +21,10 @@ final class CommandCodeLayoutTests: XCTestCase {
         for id in ["commandcode.session", "commandcode.balance"] {
             XCTAssertFalse(DefaultLayout.expandedMetricIDs.contains(id), "\(id) should be always visible")
         }
-        for id in ["commandcode.weekly", "commandcode.monthly", "commandcode.requests"] {
+        for id in [
+            "commandcode.weekly", "commandcode.monthly", "commandcode.requests",
+            "commandcode.today", "commandcode.yesterday", "commandcode.last30"
+        ] {
             XCTAssertTrue(DefaultLayout.expandedMetricIDs.contains(id), "\(id) should be on demand")
         }
         // The windows are pinned so the menu-bar segment matches every other provider's shape; the

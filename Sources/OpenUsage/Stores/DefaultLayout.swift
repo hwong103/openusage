@@ -38,6 +38,7 @@ enum DefaultLayout {
 
         "commandcode.session", "commandcode.weekly", "commandcode.monthly",
         "commandcode.balance", "commandcode.requests",
+        "commandcode.today", "commandcode.yesterday", "commandcode.last30",
 
         "devin.daily", "devin.weekly", "devin.extra",
 
@@ -120,8 +121,10 @@ enum DefaultLayout {
         "copilot.orgCredits", "copilot.orgSpend", "copilot.chat", "copilot.completions",
         // Command Code's Balance is the actual credit left on the account (the value that runs out and
         // has to be topped up), so it stays above the fold next to Session. Weekly, Monthly, and
-        // Requests are secondary detail and sit below the caret.
+        // Requests are secondary detail and sit below the caret, along with the spend-history rows
+        // every other spend-tracking provider also keeps behind the caret.
         "commandcode.weekly", "commandcode.monthly", "commandcode.requests",
+        "commandcode.today", "commandcode.yesterday", "commandcode.last30",
         "devin.extra",
         "grok.payAsYouGo", "grok.today", "grok.yesterday", "grok.last30",
         // Ollama: Session, Weekly, and Monthly stay above the fold; the rolling four-week spend total
