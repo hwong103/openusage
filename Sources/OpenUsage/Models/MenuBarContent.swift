@@ -127,7 +127,7 @@ enum MenuBarContentBuilder {
         // Both readings explicitly pinned is a deliberate choice — never override it.
         let hasBalance = pinned.contains { $0.id == balanceID }
         let hasMonthly = pinned.contains { $0.id == monthlyID }
-        guard hasBalance != hasMonthly else { return pinned }
+        guard !(hasBalance && hasMonthly) else { return pinned }
 
         // No live Monthly reading (provider still loading, or the API omitted it) is no evidence that the
         // allowance is spent, so the percentage — correct in the common case — is what gets shown.
