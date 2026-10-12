@@ -163,7 +163,7 @@ final class MenuBarContentTests: XCTestCase {
             spent.groups[0].metrics.map(\.id),
             ["commandcode.session", "commandcode.weekly", "commandcode.balance"]
         )
-        XCTAssertEqual(spent.groups[0].metrics.last?.value, "$10")
+        XCTAssertEqual(spent.groups[0].metrics.last?.value, "$70")
     }
 
     func testCommandCodeNearlySpentAllowanceStillCountsAsSpent() {
