@@ -22,7 +22,12 @@ struct KeychainICloudDeviceIDStore: ICloudDeviceIDStoring {
     private let keychain: any KeychainAccessing
 
     init(
-        keychain: any KeychainAccessing = SecurityKeychainAccessor(),
+        // The app's own item is written and read through the Apple-signed `/usr/bin/security` tool:
+        // an in-process item is scoped to the creating build's cdhash, so a locally-signed rebuild
+        // would be refused (or prompted for) on every read and every device-ID update. The tool's
+        // partition also matches items an older build created the same way. See
+        // `AppleToolKeychainAccessor`.
+        keychain: any KeychainAccessing = AppleToolKeychainAccessor(),
         bundleIdentifier: String = Bundle.main.bundleIdentifier ?? "com.robinebers.openusage"
     ) {
         self.keychain = keychain

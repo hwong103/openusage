@@ -7,12 +7,12 @@ import XCTest
 /// locally-signed build can never match in-process. These tests pin the replacement path: every read
 /// and write for a `Claude Code*` service goes through the Apple-signed `/usr/bin/security` tool, so
 /// macOS never raises a Keychain password prompt.
-final class ClaudeCLIKeychainAccessorTests: XCTestCase {
+final class AppleToolKeychainAccessorTests: XCTestCase {
     private static let service = "Claude Code-credentials"
 
     func testReadUsesAppleSecurityToolAndReturnsTrimmedValue() throws {
         let runner = ScriptedProcessRunner(results: [.init(exitCode: 0, stdout: "synthetic-blob\n", stderr: "")])
-        let accessor = ClaudeCLIKeychainAccessor(processRunner: runner)
+        let accessor = AppleToolKeychainAccessor(processRunner: runner)
 
         XCTAssertEqual(try accessor.readGenericPassword(service: Self.service), "synthetic-blob" as String?)
         XCTAssertEqual(runner.invocations.map(\.executable), ["/usr/bin/security"])
@@ -22,7 +22,7 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
 
     func testCurrentUserReadScopesByAccount() throws {
         let runner = ScriptedProcessRunner(results: [.init(exitCode: 0, stdout: "synthetic-blob", stderr: "")])
-        let accessor = ClaudeCLIKeychainAccessor(processRunner: runner)
+        let accessor = AppleToolKeychainAccessor(processRunner: runner)
 
         _ = try accessor.readGenericPasswordForCurrentUser(service: Self.service)
 
@@ -34,7 +34,7 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
     func testMissingItemExitCodeReturnsNilWithoutThrow() throws {
         // `security` exits 44 for `errSecItemNotFound`; that is "no credential stored", not a failure.
         let runner = ScriptedProcessRunner(results: [.init(exitCode: 44, stdout: "", stderr: "")])
-        let accessor = ClaudeCLIKeychainAccessor(processRunner: runner)
+        let accessor = AppleToolKeychainAccessor(processRunner: runner)
 
         XCTAssertNil(try accessor.readGenericPassword(service: Self.service))
     }
@@ -45,7 +45,7 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
             stdout: "",
             stderr: "security: SecKeychainSearchCopyNext: The user name or passphrase you entered is not correct."
         )])
-        let accessor = ClaudeCLIKeychainAccessor(processRunner: runner)
+        let accessor = AppleToolKeychainAccessor(processRunner: runner)
 
         XCTAssertThrowsError(try accessor.readGenericPassword(service: Self.service)) { error in
             guard case KeychainError.readFailed = error else {
@@ -56,7 +56,7 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
 
     func testRotationWriteUsesAddGenericPasswordUpdateForCurrentUser() throws {
         let runner = ScriptedProcessRunner(results: [.init(exitCode: 0, stdout: "", stderr: "")])
-        let accessor = ClaudeCLIKeychainAccessor(processRunner: runner)
+        let accessor = AppleToolKeychainAccessor(processRunner: runner)
 
         try accessor.writeGenericPasswordForCurrentUser(service: Self.service, value: "rotated-blob")
 
@@ -69,7 +69,7 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
 
     func testLegacyWriteUsesServiceOnlyAdd() throws {
         let runner = ScriptedProcessRunner(results: [.init(exitCode: 0, stdout: "", stderr: "")])
-        let accessor = ClaudeCLIKeychainAccessor(processRunner: runner)
+        let accessor = AppleToolKeychainAccessor(processRunner: runner)
 
         try accessor.writeGenericPassword(service: Self.service, value: "rotated-blob")
 
@@ -81,13 +81,108 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
 
     func testFailedWriteThrowsWriteFailed() {
         let runner = ScriptedProcessRunner(results: [.init(exitCode: 1, stdout: "", stderr: "denied")])
-        let accessor = ClaudeCLIKeychainAccessor(processRunner: runner)
+        let accessor = AppleToolKeychainAccessor(processRunner: runner)
 
         XCTAssertThrowsError(try accessor.writeGenericPassword(service: Self.service, value: "rotated-blob")) {
             guard case KeychainError.writeFailed = $0 else {
                 return XCTFail("expected KeychainError.writeFailed, got \($0)")
             }
         }
+    }
+
+    // MARK: - Existence probe
+
+    func testExistenceProbeUsesSecurityToolWithoutRequestingTheSecret() throws {
+        let runner = ScriptedProcessRunner(results: [.init(exitCode: 0, stdout: "synthetic-blob", stderr: "")])
+        let accessor = AppleToolKeychainAccessor(processRunner: runner)
+
+        XCTAssertEqual(accessor.genericPasswordExists(service: Self.service), true as Bool?)
+
+        let invocation = try XCTUnwrap(runner.invocations.first)
+        XCTAssertEqual(invocation.executable, "/usr/bin/security")
+        XCTAssertEqual(invocation.arguments, ["find-generic-password", "-s", Self.service])
+        XCTAssertFalse(invocation.arguments.contains("-w"))
+    }
+
+    func testExistenceProbeMapsMissingItemToFalse() {
+        let runner = ScriptedProcessRunner(results: [.init(exitCode: 44, stdout: "", stderr: "")])
+        let accessor = AppleToolKeychainAccessor(processRunner: runner)
+
+        XCTAssertEqual(accessor.genericPasswordExists(service: Self.service), false as Bool?)
+    }
+
+    func testExistenceProbeMapsAnyOtherFailureToUnknown() {
+        // Locked or denied: "unknown", never a definite answer, so callers pick their safe side.
+        let runner = ScriptedProcessRunner(results: [.init(exitCode: 51, stdout: "", stderr: "denied")])
+        let accessor = AppleToolKeychainAccessor(processRunner: runner)
+
+        XCTAssertNil(accessor.genericPasswordExists(service: Self.service))
+    }
+
+    func testExistenceProbeMapsLaunchFailureToUnknown() {
+        let accessor = AppleToolKeychainAccessor(processRunner: ThrowingProcessRunner())
+
+        XCTAssertNil(accessor.genericPasswordExists(service: Self.service))
+    }
+}
+
+/// The in-process accessor must not probe the Keychain itself any more: its existence probe has to
+/// reach the Apple tool, or a locally-signed build re-prompts on `apple-tool:` items.
+final class SecurityKeychainAccessorProbeRoutingTests: XCTestCase {
+    func testExistenceProbeRoutesThroughTheAppleToolAndNotTheItemAccessor() {
+        let itemAccessor = RecordingItemAccessor()
+        let runner = ScriptedProcessRunner(results: [.init(exitCode: 0, stdout: "", stderr: "")])
+        let accessor = SecurityKeychainAccessor(itemAccessor: itemAccessor, processRunner: runner)
+
+        XCTAssertEqual(accessor.genericPasswordExists(service: "Codex Auth"), true as Bool?)
+
+        XCTAssertEqual(runner.invocations.first?.executable, "/usr/bin/security")
+        XCTAssertEqual(runner.invocations.first?.arguments, ["find-generic-password", "-s", "Codex Auth"])
+        XCTAssertEqual(itemAccessor.readCount, 0)
+    }
+}
+
+private final class RecordingItemAccessor: SecurityItemAccessing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+
+    var readCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return reads
+    }
+
+    func readGenericPasswordData(service: String, account: String?) -> (status: OSStatus, data: Data?) {
+        lock.lock()
+        reads += 1
+        lock.unlock()
+        return (errSecItemNotFound, nil)
+    }
+
+    func firstGenericPasswordAccount(service: String) -> (status: OSStatus, account: String?) {
+        lock.lock()
+        reads += 1
+        lock.unlock()
+        return (errSecItemNotFound, nil)
+    }
+
+    func updateGenericPasswordData(service: String, account: String?, data: Data) -> OSStatus {
+        errSecItemNotFound
+    }
+
+    func addGenericPasswordData(service: String, account: String?, data: Data) -> OSStatus {
+        errSecSuccess
+    }
+}
+
+private struct ThrowingProcessRunner: ProcessRunning {
+    func run(
+        executable: String,
+        arguments: [String],
+        environment: [String: String],
+        timeout: TimeInterval
+    ) throws -> ProcessResult {
+        throw ProcessRunnerError.timedOut(executable: executable, timeout: timeout)
     }
 }
 

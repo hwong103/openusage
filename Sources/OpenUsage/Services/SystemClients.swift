@@ -359,19 +359,21 @@ struct SystemSecurityItemAccessor: SecurityItemAccessing {
     }
 }
 
-/// Reads and writes the Claude Code **CLI** credential items through Apple's `/usr/bin/security` tool.
+/// Reads and writes other-app and app-own Keychain items through Apple's `/usr/bin/security` tool.
 ///
-/// The CLI stores `Claude Code-credentials` (and its `Claude Code*` variants) with an ACL partition of
-/// `apple-tool:` because `/usr/bin/security` created it. A locally-signed build has no
-/// `keychain-access-groups` / `application-identifier` entitlement, so an in-process
-/// `SecItemCopyMatching` can never match that partition: macOS raises a Keychain password prompt on
-/// every refresh, and the XARA "always allow" grant it leaves behind is tied to item state, so it dies
-/// the moment either the CLI or the app rewrites the blob. The `/usr/bin/security` subprocess is
-/// Apple-signed, so its partition matches and the same read is silent — this is how the reader worked
-/// before `bb7de176` moved it in-process, scoped here to just the Claude CLI services.
+/// Items whose ACL partition list is `apple-tool:` — the Claude Code CLI's `Claude Code-credentials`,
+/// and anything an older OpenUsage build created through this same tool — are unreachable from a
+/// locally-signed app in-process: `SecItemCopyMatching` can never match that partition, so macOS raises
+/// a Keychain password prompt, and the XARA "always allow" grant it leaves behind is attached to item
+/// state and dies the moment the item is rewritten. The `/usr/bin/security` subprocess is Apple-signed,
+/// so its partition matches and the same access is silent — this is how the reader worked before
+/// `bb7de176` moved it in-process.
 ///
-/// Everything else (the app's own iCloud items, Codex, Cursor) keeps using `SecurityKeychainAccessor`.
-struct ClaudeCLIKeychainAccessor: KeychainAccessing {
+/// Used for the Claude CLI credential items, the launch-path existence probe, and the app's own
+/// Keychain items. Writes also give any item this app creates an `apple-tool:` partition, so every
+/// later build can read and rewrite it silently instead of prompting once per rebuild. CLI items
+/// belonging to other tools (Codex, Cursor, gh) keep `SecurityKeychainAccessor` in-process.
+struct AppleToolKeychainAccessor: KeychainAccessing {
     /// `security find-generic-password` exits 44 (`errSecItemNotFound`) when nothing matches — the
     /// legitimate "no credential stored" case. Any other non-zero exit is a real failure (locked
     /// keychain, denied read) that must not be silently rendered as "not signed in".
@@ -418,6 +420,30 @@ struct ClaudeCLIKeychainAccessor: KeychainAccessing {
         )
     }
 
+    /// Attributes-only existence probe: `find-generic-password -s <service>` with no `-w`, so the
+    /// secret is never requested. `true` — an item exists; `false` — definitively absent (exit 44);
+    /// `nil` — the probe itself failed (locked or denied), which callers read as "unknown" and resolve
+    /// on their own safe side. Runs as a subprocess, so it is never on a caller's critical thread and
+    /// can never raise a Keychain modal for an `apple-tool:` item.
+    func genericPasswordExists(service: String) -> Bool? {
+        let result: ProcessResult
+        do {
+            result = try runSecurity(["find-generic-password", "-s", service])
+        } catch {
+            AppLog.warn(.keychain, "existence probe failed for service '\(service)' (subprocess error)")
+            return nil
+        }
+        switch result.exitCode {
+        case 0:
+            return true
+        case Self.itemNotFoundExitCode:
+            return false
+        default:
+            AppLog.warn(.keychain, "existence probe failed for service '\(service)' (exit \(result.exitCode))")
+            return nil
+        }
+    }
+
     private func readPassword(_ arguments: [String], service: String) throws -> String? {
         let result = try runSecurity(arguments)
         guard result.succeeded else {
@@ -460,32 +486,28 @@ struct SecurityKeychainAccessor: KeychainAccessing {
     // Prevent concurrent refreshes for a service from stacking authorization dialogs before the first grant lands.
     private static let accessLocks = Mutex<[String: NSLock]>([:])
     let itemAccessor: any SecurityItemAccessing
+    let processRunner: any ProcessRunning
 
-    init(itemAccessor: any SecurityItemAccessing = SystemSecurityItemAccessor()) {
+    init(
+        itemAccessor: any SecurityItemAccessing = SystemSecurityItemAccessor(),
+        processRunner: any ProcessRunning = SystemProcessRunner()
+    ) {
         self.itemAccessor = itemAccessor
+        self.processRunner = processRunner
     }
 
     func readGenericPassword(service: String) throws -> String? {
         try readPassword(service: service, account: nil)
     }
 
-    /// Attributes-only existence probe used on the launch path: an in-process Security-framework
-    /// query (no subprocess, returns in microseconds) that never requests the secret and forbids
-    /// any UI, so it can neither trigger an unlock prompt nor stall launch. A failed probe (locked
-    /// keychain, denied) reports `nil` ("unknown"), never a definite answer, so callers can pick
-    /// their safe side.
+    /// Attributes-only existence probe used on the launch path. It must run through the Apple-signed
+    /// `/usr/bin/security` tool: an in-process query from this locally-signed build cannot match an
+    /// `apple-tool:` ACL partition, and `kSecUseAuthenticationUIFail` does not suppress that legacy
+    /// ACL/XARA prompt, so the attributes-only form still raised a password modal at launch. The
+    /// subprocess partition matches, so the probe is silent. A failed probe reports `nil` ("unknown"),
+    /// never a definite answer, so callers can pick their safe side. See `AppleToolKeychainAccessor`.
     func genericPasswordExists(service: String) -> Bool? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
-        ]
-        switch SecItemCopyMatching(query as CFDictionary, nil) {
-        case errSecSuccess: return true
-        case errSecItemNotFound: return false
-        default: return nil
-        }
+        AppleToolKeychainAccessor(processRunner: processRunner).genericPasswordExists(service: service)
     }
 
     func readGenericPasswordForCurrentUser(service: String) throws -> String? {

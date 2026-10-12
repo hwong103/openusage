@@ -13,7 +13,7 @@ final class ClaudeCLIKeychainRoutingTests: XCTestCase {
     func testClaudeAuthStoreDefaultsToAppleToolAccessor() {
         // The default is what every un-parameterised construction path picks up (`ProviderCatalog`,
         // `ClaudeProvider`, the swap-account inner store), so it has to be the CLI accessor.
-        XCTAssertTrue(ClaudeAuthStore().keychain is ClaudeCLIKeychainAccessor)
+        XCTAssertTrue(ClaudeAuthStore().keychain is AppleToolKeychainAccessor)
     }
 
     func testLoadReadsTheClaudeServiceThroughTheInjectedAccessor() throws {
