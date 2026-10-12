@@ -189,7 +189,7 @@ final class ClaudeDesktopAuthStoreTests: XCTestCase {
 
         _ = await ProviderAccountAssembly.make(
             observer: observer, accountsStore: ProviderAccountsStore(defaults: defaults),
-            families: ["codex"], desktop: fixture.store,
+            families: ["claude"], desktop: fixture.store,
             allowsClaudeDesktopImport: false,
             listDesktopOrganizationDirectories: { _ in organizations }
         )
@@ -197,7 +197,7 @@ final class ClaudeDesktopAuthStoreTests: XCTestCase {
 
         _ = await ProviderAccountAssembly.make(
             observer: observer, accountsStore: ProviderAccountsStore(defaults: defaults),
-            families: ["codex"], desktop: fixture.store,
+            families: ["claude"], desktop: fixture.store,
             allowsClaudeDesktopImport: true,
             listDesktopOrganizationDirectories: { _ in organizations }
         )
