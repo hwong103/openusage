@@ -29,6 +29,16 @@ APP_VERSION="0.7.0"
 APP_BUILD="0.7.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# A fork that has merged upstream should report the release it was built from, so derive the
+# version from the newest version tag. script/release.sh stamps the real version for a published
+# build, and this script has no other version source, so fall back to the constants above when
+# the checkout has no tags (a shallow clone or an exported tree).
+if TAG="$(git -C "$ROOT_DIR" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null)"; then
+  APP_VERSION="${TAG#v}"
+  APP_BUILD="$APP_VERSION"
+fi
+
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_DISPLAY.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
