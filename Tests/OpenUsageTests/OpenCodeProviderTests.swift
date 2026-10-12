@@ -8,8 +8,12 @@ final class OpenCodeProviderTests: XCTestCase {
     private let authJSON = #"{"opencode-go":{"type":"api","key":"sk-test"}}"#
     private let now = OpenUsageISO8601.date(from: "2026-07-12T12:00:00.000Z")!
 
-    private func authStore(files: TextFileAccessing) -> OpenCodeAuthStore {
-        openCodeAuthStore(files: files)
+    private func authStore(
+        files: TextFileAccessing,
+        sqlite: SQLiteAccessing = OpenCodeFakeSQLite(),
+        databasePaths: [String] = []
+    ) -> OpenCodeAuthStore {
+        openCodeAuthStore(files: files, sqlite: sqlite, databasePaths: databasePaths)
     }
 
     private func usageJSON(rolling: Int = 12, weekly: Int = 8, monthly: Int = 35) -> Data {
@@ -32,11 +36,13 @@ final class OpenCodeProviderTests: XCTestCase {
     private func provider(
         files: TextFileAccessing,
         scanner: OpenCodeUsageScanner,
-        client: OpenCodeUsageClient? = nil
+        client: OpenCodeUsageClient? = nil,
+        authSQLite: SQLiteAccessing = OpenCodeFakeSQLite(),
+        authDatabasePaths: [String] = []
     ) -> OpenCodeProvider {
         let now = self.now
         return OpenCodeProvider(
-            authStore: authStore(files: files),
+            authStore: authStore(files: files, sqlite: authSQLite, databasePaths: authDatabasePaths),
             usageClient: client ?? okClient(),
             usageScanner: scanner,
             now: { now }
@@ -100,6 +106,121 @@ final class OpenCodeProviderTests: XCTestCase {
         XCTAssertNotNil(snapshot.line(label: "Monthly"))
         XCTAssertNotNil(snapshot.line(label: "Usage Trend"))
         XCTAssertNotNil(snapshot.line(label: "Today"))
+    }
+
+    func testRefreshReadsGoKeyFromAuthJSONOnOpenCode118Database() async {
+        let path = "/oc/opencode.db"
+        let sqlite = OpenCodeFakeSQLite(
+            data: [path: "[]"],
+            openCode1CredentialTables: [path]
+        )
+        let snapshot = await provider(
+            files: FakeFiles(["/oc/auth.json": authJSON]),
+            scanner: OpenCodeUsageScanner(sqlite: sqlite, databasePaths: { [path] }),
+            authSQLite: sqlite,
+            authDatabasePaths: [path]
+        ).refresh()
+
+        XCTAssertEqual(snapshot.plan, "Go")
+        XCTAssertNotNil(snapshot.line(label: "Session"))
+        XCTAssertNotNil(snapshot.line(label: "Weekly"))
+        XCTAssertNotNil(snapshot.line(label: "Monthly"))
+    }
+
+    func testNewSubOnePercentSessionRendersCountdownThroughProviderAndStore() async throws {
+        // A session that just started still reads 0% (whole-percent API), but its rolling reset has
+        // already moved inside the five-hour window. Through the full provider → store → widget-data
+        // path the Session row must show the reset countdown, never "Not started".
+        let activeReset = now.addingTimeInterval(5 * 3600 - 30)
+        let body: [String: Any] = [
+            "usage": [
+                "rolling": ["status": "ok", "percent": 0,
+                            "resetsAt": OpenUsageISO8601.string(from: activeReset)],
+                "weekly": ["status": "ok", "percent": 1, "resetsAt": "2026-07-13T00:00:00.000Z"],
+                "monthly": ["status": "ok", "percent": 0, "resetsAt": "2026-08-04T11:18:32.000Z"]
+            ]
+        ]
+        let response = HTTPResponse(
+            statusCode: 200,
+            headers: ["date": "Sun, 12 Jul 2026 12:00:00 GMT"],
+            body: try JSONSerialization.data(withJSONObject: body)
+        )
+        let runtime = provider(
+            files: FakeFiles(["/oc/auth.json": authJSON]),
+            scanner: OpenCodeUsageScanner(sqlite: OpenCodeFakeSQLite(), databasePaths: { [] }),
+            client: OpenCodeUsageClient(http: FakeHTTPClient(response: response))
+        )
+        let descriptors = runtime.widgetDescriptors
+        let registry = WidgetRegistry(providers: [runtime.provider], descriptors: descriptors)
+        let suiteName = "OpenCodeProviderTests.sub-one-percent.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fixedNow = self.now
+        let store = WidgetDataStore(
+            registry: registry,
+            providers: [runtime],
+            cache: ProviderSnapshotCache(userDefaults: defaults),
+            defaults: defaults,
+            now: { fixedNow }
+        )
+
+        await store.refreshAll(force: true)
+
+        let descriptor = try XCTUnwrap(descriptors.first { $0.id == "opencode.session" })
+        let data = store.data(for: descriptor)
+        XCTAssertEqual(data.used, 0)
+        XCTAssertEqual(data.resetsAt, activeReset)
+        XCTAssertFalse(data.isFreshSessionWindow(now: fixedNow))
+        XCTAssertEqual(data.boundedTrailingText(now: fixedNow)?.hasPrefix("Resets in"), true)
+    }
+
+    func testUntouchedSessionRendersNotStartedThroughProviderAndStore() async throws {
+        // An untouched session returns a placeholder reset around now + 5h.
+        // Through the full provider → store → widget-data path, the Session row
+        // must drop the placeholder and render "Not started".
+        let placeholderReset = now.addingTimeInterval(5 * 3600 + 0.5)
+        let body: [String: Any] = [
+            "usage": [
+                "rolling": ["status": "ok", "percent": 0,
+                            "resetsAt": OpenUsageISO8601.string(from: placeholderReset)],
+                "weekly": ["status": "ok", "percent": 0, "resetsAt": "2026-07-13T00:00:00.000Z"],
+                "monthly": ["status": "ok", "percent": 0, "resetsAt": "2026-08-04T11:18:32.000Z"]
+            ]
+        ]
+        let response = HTTPResponse(
+            statusCode: 200,
+            headers: ["date": "Sun, 12 Jul 2026 12:00:00 GMT"],
+            body: try JSONSerialization.data(withJSONObject: body)
+        )
+        let runtime = provider(
+            files: FakeFiles(["/oc/auth.json": authJSON]),
+            scanner: OpenCodeUsageScanner(sqlite: OpenCodeFakeSQLite(), databasePaths: { [] }),
+            client: OpenCodeUsageClient(http: FakeHTTPClient(response: response))
+        )
+        let descriptors = runtime.widgetDescriptors
+        let registry = WidgetRegistry(providers: [runtime.provider], descriptors: descriptors)
+        let suiteName = "OpenCodeProviderTests.untouched.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fixedNow = self.now
+        let store = WidgetDataStore(
+            registry: registry,
+            providers: [runtime],
+            cache: ProviderSnapshotCache(userDefaults: defaults),
+            defaults: defaults,
+            now: { fixedNow }
+        )
+
+        await store.refreshAll(force: true)
+
+        let descriptor = try XCTUnwrap(descriptors.first { $0.id == "opencode.session" })
+        let data = store.data(for: descriptor)
+        XCTAssertEqual(data.used, 0)
+        XCTAssertNil(data.resetsAt)
+        XCTAssertTrue(data.isFreshSessionWindow(now: fixedNow))
+        XCTAssertEqual(data.boundedTrailingText(now: fixedNow), "Not started")
     }
 
     func testRefreshNotLoggedInWhenNoKeyAndNoDatabase() async {
@@ -245,6 +366,32 @@ final class OpenCodeProviderTests: XCTestCase {
             client: OpenCodeUsageClient(http: ThrowingHTTPClient())
         ).refresh()
         XCTAssertEqual(snapshot.errorCategory, .network)
+    }
+
+    func testGoMeterFailureKeepsLocalTiles() async {
+        let db = "[" + openCodeRow("2026-07-12T10:00:00.000Z", "1.0", 500, "gpt-5.5", "opencode") + "]"
+        let unauthorized = HTTPResponse(
+            statusCode: 401,
+            headers: [:],
+            body: Data(#"{"type":"error","error":{"type":"AuthError","message":"Unauthorized"}}"#.utf8)
+        )
+        for client in [
+            OpenCodeUsageClient(http: ThrowingHTTPClient()),
+            OpenCodeUsageClient(http: FakeHTTPClient(response: unauthorized)),
+        ] {
+            let snapshot = await provider(
+                files: FakeFiles(["/oc/auth.json": authJSON]),
+                scanner: OpenCodeUsageScanner(
+                    sqlite: OpenCodeFakeSQLite(data: ["/oc/opencode.db": db]),
+                    databasePaths: { ["/oc/opencode.db"] }
+                ),
+                client: client
+            ).refresh()
+            XCTAssertNil(snapshot.errorCategory)
+            XCTAssertNil(snapshot.plan)
+            XCTAssertNil(snapshot.line(label: "Session"))
+            XCTAssertNotNil(snapshot.line(label: "Today"))
+        }
     }
 }
 

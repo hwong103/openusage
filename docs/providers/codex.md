@@ -14,13 +14,25 @@ Tracks your ChatGPT/Codex subscription limits using the login from the Codex CLI
 | Today / Yesterday / Last 30 Days | Local spend, as cost, tokens, or both (see below) |
 
 When Codex reports your plan name, OpenUsage shows it beside the provider name.
-The usage entitlement `self_serve_business_prolite` displays as **Business Premium**.
-This is a compatibility mapping for an observed entitlement; other Business/team plans keep their existing names.
+Pro plans use the current names **Pro 100**, **Pro 200**, and **Pro 500** instead of the older usage multipliers.
+
+| Usage API plan | Display name |
+|---|---|
+| `prolite` | Pro 100 |
+| `pro` | Pro 200 |
+| `promax` | Pro 500 |
+| `self_serve_business_prolite` | Business Premium |
+
+The Pro names match [OpenAI's published plan names](https://learn.chatgpt.com/docs/dots#access).
+The Pro identifier mappings were verified against OpenAI's ChatGPT desktop app version 26.928.21956 (build 12404).
+Other Business/team plans keep their existing names; unfamiliar plan identifiers keep a readable name.
 If Codex reports only a 7-day window, it maps to Weekly without inventing a 5-hour Session meter.
 
 ## Where credentials come from
 
-Sign in once with the Codex CLI (`codex`); OpenUsage reads the same auth files (`$CODEX_HOME` respected) with a keychain fallback. Tokens refresh automatically and rotate back into the auth file.
+Sign in once with the Codex CLI (`codex`); OpenUsage reads the same auth files (`$CODEX_HOME` respected) with a Keychain fallback. The first Keychain read can ask you to grant OpenUsage access; choosing **Always Allow** authorizes the signed app for later background reads. Tokens refresh automatically and rotate back into the same auth file or Keychain item they came from.
+
+The Keychain fallback selects the Codex CLI item for `$CODEX_HOME` (or `~/.codex` when unset), including when that home is a symlink. Other Codex homes can have separate Keychain logins; OpenUsage does not pick an unrelated item just because it has the same service name.
 
 ### Codex Swap accounts
 
@@ -38,28 +50,65 @@ Upgrading from a version without Swap support refreshes saved shell settings bef
 - Concurrent `xswap run` sessions are supported. Close Codex sessions before using `xswap switch`
   to change the global login, as required by Swap.
 
+### Other Codex homes and pi logins
+
+OpenUsage also finds signed-in accounts in `CODEX_HOME`, `~/.codex`, `~/.config/codex`, sibling
+`~/.codex-*` folders, sibling `~/.config/codex-*` folders, and pi's `auth.json` (`openai-codex`,
+`openai-codex-2`, …). Logins are matched by ChatGPT workspace and email, so two users in the same
+workspace remain separate cards, and the same account signed in through several homes and pi shares
+one card, named by its xswap alias, then its pi label, then its workspace and email. A login held only
+in the Keychain counts as an account too. A single account keeps the plain Codex card, which still
+uses a login found only in a sibling home or in pi, and counts that home's session logs in its
+spend tiles. Restart OpenUsage after adding or removing a login.
+
+A card renews the token in its own Codex homes the way the plain Codex card does, so an account you
+only use through a second home keeps working between sessions; the plain card does the same for a
+lone sibling home. Logins that belong to xswap, pi, or the Keychain are read as they are: OpenUsage
+never rotates those tokens, even when `CODEX_HOME` is a link to a home xswap manages or points at an
+xswap slot that names no account. Every source is re-read on each refresh, a login another tool
+changed mid-refresh is left untouched (a renewed token that could not be saved still serves that
+refresh), and each card tries every matching login. If a read-only login has expired, use that
+account once in xswap or pi so the tool renews its own token, then refresh OpenUsage.
+
+### Whose spending goes on which card
+
+Codex session logs don't say which account ran them, so OpenUsage goes by folder: each Codex home's
+spending goes to the account signed in to that home right now.
+
+- An `xswap run` account home counts for its own account.
+- The main home (`~/.codex` or `$CODEX_HOME`) counts for whoever is signed in there now. After
+  `xswap switch`, that folder's whole history moves to the new account, and the old account's card
+  stops showing it on the next refresh.
+- Swap's **share history** option makes an account home reuse the main home's session folder instead
+  of keeping its own. Those sessions live in one place, so they count once, for the main home's account.
+  Share history is not fully supported: after `xswap switch`, the old account's card can keep showing
+  the spending it had before the switch, so the same spend appears on two cards.
+- A home whose login names no account counts for the account xswap registered there, or for the
+  Keychain login in the main home. Without either, it counts for no card.
+- pi spending goes to the account in pi's `openai-codex` login; after changing that login, restart
+  OpenUsage. OpenCode spending goes to the account signed in to the main home.
+
+With one account, all of this lands on its single card. Live limits and reset-credit actions work on
+every card regardless.
+
 ## The spend tiles
 
-With multiple Codex accounts, spending without a reliable account owner is excluded, including
-previously cached spending. Excluded history is removed before cached data appears or syncs,
-even if the login has expired or the usage request fails. Cached live limits keep their original
-freshness. A shared session folder does not establish who paid for a turn.
-With one known account, shared and copied sessions count once. Synced history must match the
-card's account and workspace. Live usage limits continue to work for every account.
+Copied sessions count once per card; a session copied into two accounts' folders counts on both. Synced history must match the card's account and workspace.
 
 **Customize → Codex → Cost Estimates → Fallback Model** optionally estimates usage that has no known price. The default is **None**. Choose a public model to use its rates for those estimates; known model prices and recorded costs remain unchanged. The existing unknown-model warning and tooltip remain visible when a fallback is used. Switching the choice recalculates local history without changing the model Codex runs. See [model pricing](../pricing.md) for details.
 
-Today / Yesterday / Last 30 Days are computed **locally**: OpenUsage reads the Codex CLI's session rollouts under `~/.codex/sessions/` and `archived_sessions/` (or `$CODEX_HOME`) itself — no external tools needed. Symlinks are followed, so a Codex home linked into a synced location (say, a Dropbox folder) is read all the same. Codex usage from the [pi](https://github.com/earendil-works/pi) coding agent counts too: OpenUsage reads pi's session logs under `~/.pi/agent/sessions/` (or `$PI_CODING_AGENT_SESSION_DIR`) and folds any Codex usage there into the same tiles and trend. The same applies when OpenCode uses its built-in ChatGPT Pro/Plus OAuth login: OpenUsage reads the `openai` rows from OpenCode's local database — including OpenCode 2's newer logs — and attributes them to Codex. Newer OpenCode 2 logs only count from after that ChatGPT login; older OpenCode logs still count as before. OpenCode keeps a separate database and login per release channel (stable and preview), and each one is judged by its own login — a preview channel on ChatGPT still counts when the stable channel uses an API key, and vice versa. OpenCode API-key traffic is not included. Days are grouped in your Mac's local time zone, so they line up with your own calendar. Each period is one tile showing cost and tokens together (`$4.08 · 1.2M tokens`); a day with no usage reads **No data** rather than a misleading `$0.00 · 0 tokens` — the same as every other spend-tracking provider. The live Session and Weekly meters are unaffected. The dollars are estimated from token counts at API rates (that's the ⓘ) using the shared [model pricing](../pricing.md); sessions that ran on the fast/priority service tier — as recorded in each session's own log — use the fast rates for exactly those turns. Older logs without tier metadata, and everything else, price at standard rates; the current `config.toml` setting is not consulted, so flipping the tier never reprices past days. Auto-review usage keeps its `codex-auto-review` name in the model breakdown, while its cost uses the dated model fallback available for that event. Luna Reserve usage keeps its `gpt-reserve` name the same way, priced at GPT-5.6 Luna rates. The token counts themselves are measured. Subagent and forked sessions copy their parent session's token history into their own log; OpenUsage recognizes those copies and counts each token once, no matter how many subagents a session spawns. No log data leaves your Mac.
+Today / Yesterday / Last 30 Days are computed **locally**: OpenUsage reads the Codex CLI's session rollouts under `~/.codex/sessions/` and `archived_sessions/` (or `$CODEX_HOME`) itself — no external tools needed. Symlinks are followed, so a Codex home linked into a synced location (say, a Dropbox folder) is read all the same. Codex usage from the [pi](https://github.com/earendil-works/pi) coding agent counts too: OpenUsage reads pi's session logs under `~/.pi/agent/sessions/` (or `$PI_CODING_AGENT_SESSION_DIR`) and folds any Codex usage there into the same tiles and trend. The same applies when OpenCode uses its built-in ChatGPT Pro/Plus OAuth login: OpenUsage reads the `openai` rows from OpenCode's local database — including OpenCode 2's newer logs — and attributes them to Codex. Newer OpenCode 2 logs only count from after that ChatGPT login; older OpenCode logs still count as before. OpenCode keeps a separate database and login per release channel (stable and preview), and each one is judged by its own login — a preview channel on ChatGPT still counts when the stable channel uses an API key, and vice versa. OpenCode API-key traffic is not included. Days are grouped in your Mac's local time zone, so they line up with your own calendar. Each period is one tile showing cost and tokens together (`$4.08 · 1.2M tokens`); a day with no usage reads **No data** rather than a misleading `$0.00 · 0 tokens` — the same as every other spend-tracking provider. The live Session and Weekly meters are unaffected. The dollars are estimated from token counts at API rates (that's the ⓘ) using the shared [model pricing](../pricing.md); sessions that ran on the fast/priority or Ultrafast service tier — as recorded in each session's own log — use the corresponding rates for exactly those turns. Older logs without tier metadata, and everything else, price at standard rates; the current `config.toml` setting is not consulted, so flipping the tier never reprices past days. Auto-review keeps its `codex-auto-review` name and measured tokens. Requests from October 6, 2026 at 00:00 UTC cost $0, following the calendar date of [OpenAI’s announcement](https://x.com/thsottiaux/status/2107368734981517634); earlier requests retain the previous dated model estimates. The same cutoff applies to native Codex logs, pi, and OpenCode. Auto-review remains a separate model entry even when a period combines earlier paid estimates with free requests, and a selected fallback model never charges for those free requests. Luna Reserve usage keeps its `gpt-reserve` name the same way, priced at GPT-5.6 Luna rates. The token counts themselves are measured. Subagent and forked sessions copy their parent session's token history into their own log; OpenUsage recognizes those copies and counts each token once, no matter how many subagents a session spawns. No log data leaves your Mac.
 
 Large session files are read in small chunks instead of being loaded into memory. Unusually large
 individual records are skipped and logged; local spend can be incomplete if a skipped record contained usage.
 
-For supported GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 models, requests above 272k input tokens use OpenAI's long-context rates for the whole request. These Codex-specific request rules apply consistently to native Codex logs and zero-cost Codex OAuth usage imported from pi or OpenCode. Daybreak Blue usage is priced as GPT-5.6 Sol, matching OpenAI's published alias and Daybreak pricing. Cached input uses the published cache-read discount when the pricing source provides one; otherwise it is estimated at the full input rate. Fast/priority estimates use each model's published Codex multiplier (for example, GPT-5.5 uses 2.5×); model names ending in `-fast` are normalized to their unscaled base rate before that multiplier is applied once.
+For supported GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 models, requests above 272k input tokens use OpenAI's long-context rates for the whole request. These Codex-specific request rules apply consistently to native Codex logs and zero-cost Codex OAuth usage imported from pi or OpenCode. Daybreak Blue usage is priced as GPT-5.6 Sol, matching OpenAI's published alias and Daybreak pricing. Cached input uses the published cache-read discount when the pricing source provides one; otherwise it is estimated at the full input rate. Fast/priority estimates use each model's published Codex multiplier (for example, GPT-5.5 uses 2.5×); Ultrafast is 6× for GPT-6 Astra and uses the Fast multiplier for other models. Model names ending in `-fast` are normalized to their unscaled base rate before that multiplier is applied once.
 
 ## Troubleshooting
 
 - **"Not logged in"** — run `codex` and sign in, then refresh.
 - **A Codex Swap account needs login**: run `xswap login <account>` for the named account, then refresh.
+- **A pi-only account needs login**: use that account in pi to renew its token, then refresh OpenUsage.
 - **API-key-only setups** can't read subscription usage — sign in with your ChatGPT account instead.
 - **Spend tiles show "No data"** — OpenUsage found no qualifying Codex usage in Codex, pi, or OpenCode logs from the last 30 days. If your Codex home lives somewhere custom, set `CODEX_HOME` so both the Codex CLI and OpenUsage look in the same place.
 - **OpenCode usage is missing** — OpenCode must currently have an `openai` OAuth credential in
@@ -90,3 +139,12 @@ Safeguards, because a claim is irreversible:
 - Claiming is always a deliberate two-click flow behind the hover popover — nothing is ever claimed automatically.
 - Each claim targets one explicit credit (re-matched against a fresh credit list at claim time) and carries an idempotency key, so a retry after a network error can never spend a second credit.
 - If the credit was meanwhile used elsewhere (CLI or web) the popover says it's no longer available and refreshes; if your usage doesn't need a reset, Codex refuses without spending the credit and the popover says so. After a claim resets usage, the remaining Use buttons disable ("nothing to reset") until the popover is reopened.
+
+### Slow Local History
+
+Live quota refreshes wait at most five seconds for local token-history processing. If a large archive
+takes longer, quota still updates and the card shows a history-updating notice. One scan per provider
+continues in the background; a later refresh collects its result. Previously loaded history is retained
+while waiting. Pending history does not show a premature "No usage data" badge.
+A fresh launch may show quota before history appears. Network and authentication
+failures still use the normal stale-data handling.

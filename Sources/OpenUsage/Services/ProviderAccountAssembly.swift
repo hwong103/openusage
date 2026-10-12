@@ -22,7 +22,8 @@ struct ProviderAccountAssembly {
     /// homes, so the keys are the bare family ids; a family whose identity didn't resolve is absent.
     let identityKeysByCard: [String: String]
     var claudeCards: [ClaudeAccountCard] = []
-    var codexCards: [CodexAccountCard] = []
+    var codex = CodexAccountDiscovery()
+    var codexCards: [CodexAccountCard] { codex.cards }
 
     /// `waitsForLoginShell`: true for the menu-bar app (a Finder/Dock launch inherits no shell
     /// exports, so the pass leans on the login-shell layers), false for the one-shot CLI (a terminal
@@ -74,6 +75,7 @@ struct ProviderAccountAssembly {
         observer: DefaultAccountObserver,
         accountsStore: ProviderAccountsStore,
         families: Set<String> = ProviderAccountID.families,
+        listCodexHomeDirectories: @escaping @Sendable (String) -> [String] = CodexHomeScanner.listSubdirectories,
         desktop: ClaudeDesktopAuthStore? = nil,
         allowsClaudeDesktopImport: Bool = true,
         listDesktopOrganizationDirectories: @escaping @Sendable (URL) -> [String] = { root in
@@ -89,8 +91,11 @@ struct ProviderAccountAssembly {
             }
         }
     ) async -> ProviderAccountAssembly {
-        let codexCards = families.contains("codex")
-            ? await makeCodexCards(observer: observer, accountsStore: accountsStore) : []
+        let codex = families.contains("codex")
+            ? await makeCodexCards(observer: observer, accountsStore: accountsStore,
+                                   listDirectories: listCodexHomeDirectories)
+            : CodexAccountDiscovery()
+        let codexCards = codex.cards
         var identityKeys = Dictionary(uniqueKeysWithValues: codexCards.map { ($0.id, $0.identity.key) })
         var observations: [ProviderAccountsStore.Observation] = []
 
@@ -121,7 +126,7 @@ struct ProviderAccountAssembly {
 
         guard families.contains("claude") else {
             accountsStore.reconcile(with: observations)
-            return ProviderAccountAssembly(identityKeysByCard: identityKeys, codexCards: codexCards)
+            return ProviderAccountAssembly(identityKeysByCard: identityKeys, codex: codex)
         }
 
         let swapAccounts = ClaudeSwapAccount.discover(files: observer.files, home: observer.homeDirectory())
@@ -143,7 +148,7 @@ struct ProviderAccountAssembly {
 
         if let claudeIdentity = identityKeys["claude"], !claudeIdentity.contains("|"), swapAccounts.isEmpty {
             accountsStore.reconcile(with: observations)
-            return ProviderAccountAssembly(identityKeysByCard: identityKeys, codexCards: codexCards)
+            return ProviderAccountAssembly(identityKeysByCard: identityKeys, codex: codex)
         }
 
         let desktop = desktop ?? ClaudeDesktopAuthStore(
@@ -249,7 +254,7 @@ struct ProviderAccountAssembly {
         for index in cards.indices {
             cards[index].additionalLogDirectories = swapAccounts.map(\.sessionDirectory)
         }
-        return ProviderAccountAssembly(identityKeysByCard: identityKeys, claudeCards: cards, codexCards: codexCards)
+        return ProviderAccountAssembly(identityKeysByCard: identityKeys, claudeCards: cards, codex: codex)
     }
 
     private struct DesktopOrganization {

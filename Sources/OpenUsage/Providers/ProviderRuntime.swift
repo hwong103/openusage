@@ -29,10 +29,6 @@ protocol ProviderRuntime: AnyObject {
     var provider: Provider { get }
     var widgetDescriptors: [WidgetDescriptor] { get }
 
-    /// Whether stored local spending still has usable account ownership for this card.
-    /// Applied before cached data can paint or be exported, including when refresh fails.
-    var allowsCachedLocalHistory: Bool { get }
-
     func refresh() async -> ProviderSnapshot
 
     /// Whether credentials for this provider already exist on this machine — a cheap, local-only probe
@@ -40,10 +36,15 @@ protocol ProviderRuntime: AnyObject {
     /// `FirstRunSeeder` to enable exactly the providers the user actually has. Mirror the credential
     /// sources `refresh()` reads, and run blocking loads via `loadOffMainActor`.
     func hasLocalCredentials() async -> Bool
+
+    /// Hands the provider the snapshot painted from the launch cache, called once at launch and only
+    /// when the entry's account stamp matched the card's known identity. Providers whose in-memory
+    /// fallback state doesn't survive a relaunch can hold it for their first degraded refresh.
+    func adoptLaunchSnapshot(_ snapshot: ProviderSnapshot)
 }
 
 extension ProviderRuntime {
-    var allowsCachedLocalHistory: Bool { true }
+    func adoptLaunchSnapshot(_ snapshot: ProviderSnapshot) {}
 }
 
 /// Run a blocking, `Sendable` credential load off the MainActor.

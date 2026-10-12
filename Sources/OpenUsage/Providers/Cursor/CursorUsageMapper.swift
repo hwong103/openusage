@@ -18,6 +18,8 @@ struct CursorPlanUsageFacts {
     let limit: Double?
     /// `planUsage.totalPercentUsed`, when numeric.
     let totalPercentUsed: Double?
+    /// Two usable model-pool percentages, excluding legacy zero placeholders beside positive spend.
+    let hasModelPools: Bool
     /// `spendLimitUsage.limitType`, lowercased.
     let spendLimitType: String?
     /// `spendLimitUsage.pooledLimit` (0 when absent).
@@ -29,6 +31,15 @@ struct CursorPlanUsageFacts {
         hasPlanUsage = planUsage != nil
         limit = planUsage.flatMap { ProviderParse.number($0["limit"]) }
         totalPercentUsed = planUsage.flatMap { ProviderParse.number($0["totalPercentUsed"]) }
+        let auto = planUsage.flatMap { ProviderParse.number($0["autoPercentUsed"]) }
+        let api = planUsage.flatMap { ProviderParse.number($0["apiPercentUsed"]) }
+        let spent = planUsage.flatMap { ProviderParse.number($0["totalSpend"]) }
+            ?? ((limit ?? 0) - (planUsage.flatMap { ProviderParse.number($0["remaining"]) } ?? limit ?? 0))
+        if let auto, let api, auto.isFinite, api.isFinite, auto >= 0, api >= 0 {
+            hasModelPools = auto > 0 || api > 0 || spent == 0
+        } else {
+            hasModelPools = false
+        }
         let spendLimitUsage = usage["spendLimitUsage"] as? [String: Any]
         spendLimitType = (spendLimitUsage?["limitType"] as? String)?.lowercased()
         pooledLimit = ProviderParse.number(spendLimitUsage?["pooledLimit"]) ?? 0
@@ -38,13 +49,13 @@ struct CursorPlanUsageFacts {
     var hasTotalUsagePercent: Bool { totalPercentUsed != nil }
     /// `planUsage` exists but carries no usable limit — the "present but unusable" state the fallbacks key on.
     var planUsageLimitMissing: Bool { hasPlanUsage && !hasLimit }
-    var planUsageUnusable: Bool { !hasPlanUsage || planUsageLimitMissing }
+    var planUsageUnusable: Bool { !hasPlanUsage || (planUsageLimitMissing && !hasModelPools) }
     /// Team account inferred from the spend-limit shape alone (independent of the plan name).
     var isTeamByShape: Bool { spendLimitType == "team" || pooledLimit > 0 }
     /// The generic request-based fallback trigger: an enabled account with a `planUsage` that carries
     /// neither a limit nor a total-percent figure.
     var shouldTryGenericRequestFallback: Bool {
-        isEnabled && hasPlanUsage && !hasLimit && !hasTotalUsagePercent
+        isEnabled && hasPlanUsage && !hasLimit && !hasTotalUsagePercent && !hasModelPools
     }
 }
 
@@ -126,7 +137,7 @@ enum CursorUsageMapper {
 
         let normalizedPlan = planName?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
 
-        guard facts.hasLimit || facts.hasTotalUsagePercent else {
+        guard facts.hasLimit || facts.hasTotalUsagePercent || facts.hasModelPools else {
             throw CursorUsageError.totalUsageLimitMissing
         }
 
@@ -145,7 +156,16 @@ enum CursorUsageMapper {
         let spendLimitUsage = usage["spendLimitUsage"] as? [String: Any]
         let isTeamAccount = normalizedPlan == "team" || facts.isTeamByShape
 
-        if isTeamAccount {
+        if isTeamAccount && facts.hasModelPools {
+            // Modern Teams seats still report the old $20 allowance. Structured pool data wins;
+            // never synthesize a total from stale dollars when Cursor omits totalPercentUsed.
+            if let percent = facts.totalPercentUsed {
+                lines.append(.progress(
+                    label: "Total usage", used: percent, limit: 100, format: .percent,
+                    resetsAt: cycle.resetsAt, periodDurationMs: cycle.periodDurationMs
+                ))
+            }
+        } else if isTeamAccount {
             guard let limitCents = facts.limit else {
                 throw CursorUsageError.requestBasedUnavailable("Cursor request-based usage data unavailable. Try again later.")
             }
@@ -275,21 +295,21 @@ enum CursorUsageMapper {
             return (true, "Cursor request-based usage data unavailable. Try again later.")
         }
 
-        if facts.isTeamByShape && facts.planUsageLimitMissing {
+        if facts.isTeamByShape && facts.planUsageLimitMissing && !facts.hasModelPools {
             return (true, "Cursor request-based usage data unavailable. Try again later.")
         }
 
         return (false, "")
     }
 
-    /// Append the shared Today / Yesterday / Last 30 Days spend tiles from Cursor's CSV rows. The rows
+    /// Append the shared Today / Yesterday / Last 30 Days spend tiles from Cursor's usage-event rows. The rows
     /// are aggregated into one local-calendar-day `DailyUsageSeries` and handed to `SpendTileMapper`
     /// — the same builder the Claude/Codex/Grok tiles use — so the output is identical apart from the
-    /// source note. Cursor's costs are calculated locally from the exported token counts, so the dollar
-    /// values carry the estimate icon. Callers only invoke this when the CSV fetched and parsed, so a
+    /// source note. Cursor's costs are calculated locally from the usage-event token counts, so the dollar
+    /// values carry the estimate icon. Callers only invoke this when usage history is complete, so a
     /// failure appends nothing and the tiles read "No data".
     ///
-    /// Model breakdown rows group by base model, not raw CSV slug: Cursor exports one slug per thinking
+    /// Model breakdown rows group by base model, not raw slug: Cursor reports one slug per thinking
     /// effort / fast combination (`claude-opus-4-8-thinking-max`, `gpt-5.5-extra-high-fast`, …), and a
     /// panel of near-duplicate rows hides the actual ranking. The supplement's alias rules already
     /// collapse those slugs to a canonical pricing key, and `-fast` canonicals fold into their base, so
@@ -297,7 +317,7 @@ enum CursorUsageMapper {
     /// family grouping). The raw slugs survive as `variants` — the per-effort breakdown the row's
     /// tooltip shows.
     static func appendSpendLines(
-        rows: [CursorUsageCSVRow],
+        rows: [CursorUsageRow],
         now: Date,
         pricing: ModelPricing,
         to lines: inout [MetricLine]
@@ -355,11 +375,11 @@ enum CursorUsageMapper {
         SpendTileMapper.appendTokenUsage(series, to: &lines, now: now, estimated: true,
                                          unknownModelsByDay: unknownModelsByDay,
                                          modelUsage: modelUsage,
-                                         modelSourceNote: "From your Cursor usage export")
-        // Cursor's tokens come from the server-exported usage CSV, not a local CLI log, so the trend
+                                         modelSourceNote: "From your Cursor usage history")
+        // Cursor's tokens come from the server usage history, not a local CLI log, so the trend
         // note names that source rather than the "estimated from local logs" line the log-scanning
         // providers use. Tokens are measured either way.
-        SpendTileMapper.appendUsageTrend(series, to: &lines, now: now, note: "From your Cursor usage export")
+        SpendTileMapper.appendUsageTrend(series, to: &lines, now: now, note: "From your Cursor usage history")
         return ProviderUsageHistory(
             series: series,
             modelUsage: modelUsage,

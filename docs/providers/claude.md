@@ -73,6 +73,10 @@ A `CLAUDE_CODE_OAUTH_TOKEN` — usually a long-lived `claude setup-token` — ca
 
 If one source holds an expired or "locked out" token, OpenUsage falls back to the others — so signing in again with `claude` outside the app is picked up on the next refresh, without restarting OpenUsage. Claude Code tokens are refreshed automatically; rotated tokens are written back only while the ordered login candidates still match the start of the refresh, so a newly added higher-priority login wins. Claude Desktop tokens are never refreshed or written by OpenUsage.
 
+Saving a refreshed Claude Code token updates only its access token, refresh token, and expiry in the
+latest credential document. MCP logins and other Claude Code fields are preserved, including changes
+made while OpenUsage was refreshing.
+
 ## Claude Swap accounts
 
 OpenUsage discovers the saved accounts in Claude Swap's `~/.claude-swap-backup/sequence.json`
@@ -136,14 +140,19 @@ Local spend does not require a Claude OAuth login. If Claude Code uses an API-ke
 - **"Claude Desktop login can't be read by this ad-hoc signed build"** — locally staged ad-hoc builds skip Claude Desktop's externally owned Keychain item to avoid a blocking permission lookup. Use a stable signed build for Desktop credentials; Claude Code credentials and local spend remain available.
 - **"Claude Desktop login is stale"** — open Claude Desktop so it can renew the login, then refresh OpenUsage.
 - **"Re-login for live usage"** (an amber warning on the Claude header) — your saved login can authenticate for inference but can't read your subscription limits, because it lacks the `user:profile` access (this is what an inference-only token from `claude setup-token` carries). Run `claude` and sign in again with your Claude account, then refresh; the spend tiles keep working in the meantime.
-- **"Updates blocked by Anthropic"** (an amber warning on the Claude header) — the usage API is throttling OpenUsage. It keeps the last values from the same login, shows when it will retry, and backs off in the meantime. A different login starts with a fresh cache and cooldown.
+- **"Updates blocked by Anthropic"** (an amber warning on the Claude header) — the usage API is throttling OpenUsage. It keeps the last values from the same login — including, right after a relaunch, the limits cached for the same verified account (windows that have already reset are dropped) — shows when it will retry, and backs off in the meantime. A different login starts with a fresh cache and cooldown.
 - **Spend tiles show "No data"** — OpenUsage found no Claude Code logs in the last 30 days. If your logs live somewhere custom, set `CLAUDE_CONFIG_DIR` so both Claude Code and OpenUsage look in the same place.
 
 ## Under the hood
 
-`GET https://api.anthropic.com/api/oauth/usage?cedar_ember=1` with the selected OAuth token. The
-`cedar_ember=1` flag asks for the reset grants (Anthropic's internal name for the program), the same
-way Claude Code does. Claude Code tokens refresh via `platform.claude.com/v1/oauth/token`; Claude Desktop tokens are read-only and must be renewed by Desktop itself. If a token is expired or revoked, OpenUsage retries with the next credential source before reporting an error.
+`GET https://api.anthropic.com/api/oauth/usage` with the selected OAuth token. The Rate Limit Resets
+row comes from a separate `GET https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1`
+(`cedar_ember` is Anthropic's internal name for the reset grants), the same request Claude Code makes.
+Anthropic throttles that request when it's polled, so OpenUsage checks it at most once an hour per
+login and shows the last answer in between; a failed check keeps the previous value and tries again an
+hour later. Token refreshes keep that cached answer; switching accounts starts a separate check. If
+the login changes while a request is running, OpenUsage discards the old account's answer and reloads
+the current login before showing usage. Claude Code tokens refresh via `platform.claude.com/v1/oauth/token`; Claude Desktop tokens are read-only and must be renewed by Desktop itself. If a token is expired or revoked, OpenUsage retries with the next credential source before reporting an error.
 
 The plan badge reads `GET https://api.anthropic.com/api/oauth/profile` (the organization's `rate_limit_tier`), because the plan Claude Code saves at sign-in never updates afterwards. To stay clear of Anthropic's rate limits, that lookup runs at most once per access token — after a usage fetch has succeeded — and cards bound to a specific account reuse the profile they already fetched to verify identity, so they make no extra request. Inference-only tokens skip it entirely.
 

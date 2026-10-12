@@ -1,4 +1,5 @@
 import XCTest
+import os
 @testable import OpenUsage
 
 /// The shipped pricing resources (supplement + LiteLLM/models.dev snapshots) as a ready-to-use
@@ -147,6 +148,15 @@ enum CodexLogFixture {
         )
     }
 
+    /// A pi scanner pinned to an empty sessions dir, so a developer's real pi logs stay out.
+    static func noPi() -> PiUsageScanner {
+        PiUsageScanner(
+            environment: FakeEnvironment([:]),
+            homeDirectory: { FileManager.default.temporaryDirectory.appendingPathComponent("openusage-no-pi-home") },
+            incrementalScanner: IncrementalJSONLScanner<PiUsageScanner.Entry>()
+        )
+    }
+
     /// A `turn_context` line carrying the session's active model.
     static func turnContext(timestamp: String, model: String) -> String {
         jsonLine([
@@ -188,13 +198,17 @@ enum CodexLogFixture {
 
     /// An `event_msg`/`thread_settings_applied` line carrying the session's service tier, the way
     /// Codex CLI ≥ July 2026 records tier changes.
-    static func threadSettingsApplied(timestamp: String, serviceTier: String, model: String = "gpt-5.2") -> String {
-        jsonLine([
+    static func threadSettingsApplied(timestamp: String, serviceTier: String?, model: String = "gpt-5.2") -> String {
+        var threadSettings: [String: Any] = ["model": model]
+        if let serviceTier {
+            threadSettings["service_tier"] = serviceTier
+        }
+        return jsonLine([
             "timestamp": timestamp,
             "type": "event_msg",
             "payload": [
                 "type": "thread_settings_applied",
-                "thread_settings": ["model": model, "service_tier": serviceTier]
+                "thread_settings": threadSettings
             ]
         ])
     }
@@ -296,6 +310,44 @@ final class FakeKeychain: KeychainAccessing, @unchecked Sendable {
     }
 }
 
+final class ThreadRecordingKeychain: KeychainAccessing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: String]
+    private var writeWasMainThread: Bool?
+
+    var lastWriteWasMainThread: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return writeWasMainThread
+    }
+
+    init(values: [String: String] = [:]) {
+        self.values = values
+    }
+
+    func readGenericPassword(service: String) throws -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return values[service]
+    }
+
+    func writeGenericPassword(service: String, value: String) throws {
+        let isMainThread = Thread.isMainThread
+        lock.lock()
+        values[service] = value
+        writeWasMainThread = isMainThread
+        lock.unlock()
+    }
+
+    func readGenericPassword(service: String, account: String) throws -> String? {
+        try readGenericPassword(service: service)
+    }
+
+    func writeGenericPassword(service: String, account: String, value: String) throws {
+        try writeGenericPassword(service: service, value: value)
+    }
+}
+
 final class ServiceKeychain: KeychainAccessing, @unchecked Sendable {
     var values: [String: String]
     var currentUserValues: [String: String]
@@ -340,6 +392,36 @@ final class FakeHTTPClient: HTTPClient, @unchecked Sendable {
 /// default on purpose: a real provider must decide its own credential probe (see `FirstRunSeeder`).
 extension ProviderRuntime {
     func hasLocalCredentials() async -> Bool { false }
+}
+
+extension CodexHistoryHomes {
+    /// The homes whose history `identity` owns right now, judged from `files` alone.
+    func ownedHomes(by identity: CodexAccountIdentity, files: TextFileAccessing) -> [String] {
+        let authStore = CodexAuthStore(environment: FakeEnvironment([:]), files: files, keychain: FakeKeychain())
+        return claims(for: identity, authStore: authStore).logHomes.read.map(\.path)
+    }
+}
+
+extension CodexProvider {
+    /// Counts only `logUsageScanner`'s rollouts, so a developer's real pi and OpenCode history never
+    /// folds into fixture totals.
+    static func isolated(
+        localHistoryWait: Duration = .seconds(5),
+        provider: Provider = CodexProvider.makeProvider(),
+        authStore: CodexAuthStore = CodexAuthStore(),
+        usageClient: CodexUsageClient = CodexUsageClient(),
+        logUsageScanner: CodexLogUsageScanner = CodexLogFixture.scanner(home: nil),
+        historyScope: CodexHistoryScope = .allHomes,
+        now: @escaping @Sendable () -> Date = Date.init,
+        pricing: @escaping @Sendable () async -> ModelPricing = { TestPricing.bundled }
+    ) -> CodexProvider {
+        CodexProvider(
+            localHistoryWait: localHistoryWait, provider: provider, authStore: authStore, usageClient: usageClient,
+            logUsageScanner: logUsageScanner, piUsageScanner: CodexLogFixture.noPi(),
+            openCodeUsageScanner: OpenCodeCodexUsageScanner(databasePaths: { [] }), historyScope: historyScope,
+            now: now, pricing: pricing
+        )
+    }
 }
 
 
@@ -479,7 +561,8 @@ final class KeyValueSQLite: SQLiteAccessing, @unchecked Sendable {
 /// Routes each request through a handler and records every request — for multi-request flows like
 /// the 401 → token refresh → retry sequence, where a single canned response can't express the flow.
 final class RoutingHTTPClient: HTTPClient, @unchecked Sendable {
-    var requests: [HTTPRequest] = []
+    private let requestsLock = OSAllocatedUnfairLock(initialState: [HTTPRequest]())
+    var requests: [HTTPRequest] { requestsLock.withLock { $0 } }
     private let handler: @Sendable (HTTPRequest) async throws -> HTTPResponse
 
     init(handler: @escaping @Sendable (HTTPRequest) async throws -> HTTPResponse) {
@@ -487,7 +570,14 @@ final class RoutingHTTPClient: HTTPClient, @unchecked Sendable {
     }
 
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
-        requests.append(request)
+        requestsLock.withLock { $0.append(request) }
         return try await handler(request)
     }
+}
+
+extension HTTPRequest {
+    /// Claude's hourly reset-grants check, which shares the usage endpoint's path.
+    var isClaudeResetGrantsCheck: Bool { url.query?.contains("cedar_ember=1") == true }
+    /// A regular Claude usage read, not the reset-grants check.
+    var isClaudeUsagePoll: Bool { url.path.hasSuffix("/api/oauth/usage") && !isClaudeResetGrantsCheck }
 }

@@ -16,17 +16,23 @@ final class CursorProvider: ProviderRuntime {
     let usageClient: CursorUsageClient
     let now: @Sendable () -> Date
     let pricing: @Sendable () async -> ModelPricing
+    let spendHistoryBudget: TimeInterval
+    let usageHistoryStore: CursorUsageHistoryStore
 
     init(
         authStore: CursorAuthStore = CursorAuthStore(),
         usageClient: CursorUsageClient = CursorUsageClient(),
         now: @escaping @Sendable () -> Date = Date.init,
-        pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
+        pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() },
+        spendHistoryBudget: TimeInterval = 20,
+        usageHistoryStore: CursorUsageHistoryStore = CursorUsageHistoryStore()
     ) {
         self.authStore = authStore
         self.usageClient = usageClient
         self.now = now
         self.pricing = pricing
+        self.spendHistoryBudget = spendHistoryBudget
+        self.usageHistoryStore = usageHistoryStore
     }
 
     var widgetDescriptors: [WidgetDescriptor] {
@@ -50,7 +56,7 @@ final class CursorProvider: ProviderRuntime {
                 .exportingHistory(
                     scope: .accountWide,
                     estimatedCost: true,
-                    sourceNote: "From your Cursor usage export"
+                    sourceNote: "From your Cursor usage history"
                 )
         ] + WidgetDescriptor.spendTiles(
             provider: provider,
@@ -178,55 +184,41 @@ final class CursorProvider: ProviderRuntime {
         lines.append(line)
     }
 
-    /// Strictly additive: fetch the usage CSV and append the three per-day spend tiles. Any failure
-    /// (no session, non-2xx, or undecodable body) appends nothing, so the live Cursor mapping is never
-    /// affected and the spend tiles fall back to "No data".
+    /// Spend history is best-effort and never affects the live Cursor usage mapping.
     private func appendSpendLines(to lines: inout [MetricLine], accessToken: String) async -> ProviderUsageHistory? {
-        let calendar = Calendar.current
-        let end = now()
-        let startOfToday = calendar.startOfDay(for: end)
-        let start = calendar.date(byAdding: .day, value: -29, to: startOfToday) ?? startOfToday
-
-        let response: HTTPResponse?
-        do {
-            response = try await usageClient.fetchUsageCSV(accessToken: accessToken, start: start, end: end)
-        } catch {
-            AppLog.warn(LogTag.plugin("cursor"), "usage CSV request failed")
+        guard let session = CursorUsageClient.session(from: accessToken) else {
+            AppLog.warn(LogTag.plugin("cursor"), "usage events could not be prepared from the current session")
             return nil
         }
-        guard let response else {
-            AppLog.warn(LogTag.plugin("cursor"), "usage CSV request could not be prepared from the current session")
-            return nil
-        }
-        guard (200..<300).contains(response.statusCode) else {
-            AppLog.warn(LogTag.plugin("cursor"), "usage CSV request returned HTTP \(response.statusCode)")
-            return nil
-        }
-        guard let csv = String(data: response.body, encoding: .utf8) else {
-            AppLog.warn(LogTag.plugin("cursor"), "usage CSV response was not valid UTF-8")
+        let currentTime = now()
+        let fetcher = CursorSpendHistoryFetcher(
+            client: usageClient,
+            store: usageHistoryStore,
+            budget: spendHistoryBudget
+        )
+        guard let days = await fetcher.refresh(
+            accessToken: accessToken,
+            userID: session.userID,
+            now: currentTime
+        ) else {
             return nil
         }
         let pricing = await pricing()
-        do {
-            let parsed = try CursorUsageCSV.parse(csv: csv, pricing: pricing)
-            if parsed.rejectedRowCount > 0 {
-                AppLog.warn(
-                    LogTag.plugin("cursor"),
-                    "usage CSV ignored \(parsed.rejectedRowCount) malformed row\(parsed.rejectedRowCount == 1 ? "" : "s")"
+        let rows = days.flatMap { dayStart, day in
+            day.models.map { model, tokens in
+                CursorUsageRow(
+                    date: dayStart,
+                    model: model,
+                    tokens: tokens,
+                    imputedCostDollars: pricing.estimatedCostDollars(
+                        model: model,
+                        tokens: tokens,
+                        applyLongContextRates: false
+                    )
                 )
             }
-            return CursorUsageMapper.appendSpendLines(rows: parsed.rows, now: end, pricing: pricing, to: &lines)
-        } catch let error as CursorUsageCSVError {
-            switch error {
-            case .missingColumns(let columns):
-                AppLog.warn(LogTag.plugin("cursor"), "usage CSV missing required columns: \(columns.joined(separator: ", "))")
-            case .malformedCSV:
-                AppLog.warn(LogTag.plugin("cursor"), "usage CSV is structurally malformed")
-            }
-        } catch {
-            AppLog.warn(LogTag.plugin("cursor"), "usage CSV could not be parsed")
         }
-        return nil
+        return CursorUsageMapper.appendSpendLines(rows: rows, now: currentTime, pricing: pricing, to: &lines)
     }
 
     private func fetchUsageWithRetry(accessToken: String, authState: inout CursorAuthState) async throws -> HTTPResponse {
@@ -277,7 +269,10 @@ final class CursorProvider: ProviderRuntime {
         // fragment of that statement (JWTs aren't covered by log redaction). A generic error line keeps
         // it loud without risking a token leak. The refreshed token still works for this session.
         do {
-            try authStore.saveAccessToken(accessToken, source: authState.source)
+            let source = authState.source
+            try await loadOffMainActor { [authStore, accessToken, source] in
+                try authStore.saveAccessToken(accessToken, source: source)
+            }
         } catch {
             AppLog.error(LogTag.auth("cursor"), "failed to persist rotated access token to the Cursor state DB; using it for this session only")
         }

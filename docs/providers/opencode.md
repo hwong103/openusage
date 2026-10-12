@@ -23,9 +23,12 @@ subscription), the cap meters are hidden and you'll just see the spend tiles.
 ## Where credentials come from
 
 Use OpenCode as usual. OpenUsage reads the `opencode-go` API key from OpenCode's local data directory
-(`~/.local/share/opencode/auth.json`, or `$OPENCODE_DATA_DIR` / `$XDG_DATA_HOME` if you've set them) and
-sends it as a Bearer token to the usage API. There's no login prompt and no token to paste. Spend tiles
-still read the local SQLite logs in that same directory.
+(`~/.local/share/opencode`, or `$OPENCODE_DATA_DIR` / `$XDG_DATA_HOME` if you've set them) and sends it
+as a Bearer token to the usage API. OpenCode 2 keeps that key in its local databases; OpenCode 1 keeps
+it in `auth.json`. Once OpenCode 2 has moved your logins into its databases, OpenUsage ignores that
+file. OpenCode 1 keeps using `auth.json`, even though recent 1.x versions already create the empty
+database table. Logging out of Go in OpenCode 2 is respected. There's no login prompt and no token
+to paste. Spend tiles still read the local SQLite logs in that same directory.
 
 When OpenCode uses its built-in ChatGPT Pro/Plus OAuth login, that usage belongs to the Codex
 subscription and appears in OpenUsage's **Codex** spend tiles and trend, including OpenCode 2's
@@ -43,13 +46,19 @@ Codex / Cursor. Those dollars come straight from the per-message cost OpenCode r
 gateways on this Mac, so they can be lower than account-wide Go usage. A period with no recorded local
 usage reads "No data" rather than a misleading `$0.00`. No log data leaves your Mac.
 
+While the rolling 5-hour session window has no usage in it, the Session row shows **Not started** on
+the trailing label; hover explains that the session begins after your first message. Once the window is
+running the row shows the countdown to its reset — including when OpenCode's whole-percent numbers
+still read 0% because less than 1% has been used.
+
 ## Troubleshooting
 
 - **No Session / Weekly / Monthly meters** — those are Go-plan windows. You'll see them when you're
-  logged into OpenCode Go (`opencode-go` in `auth.json`) and the key has an active subscription.
+  logged into OpenCode Go and the key has an active subscription.
   Zen-only users see the spend tiles instead.
-- **"OpenCode Go key was rejected"** — the local key was not accepted. Log into OpenCode Go again so
-  `auth.json` is rewritten.
+- **"OpenCode Go key was rejected"** — the local key was not accepted. Log into OpenCode Go again. If
+  you have local usage, the spend tiles still show; only the Go meters are hidden. The same applies
+  when the usage API can't be reached.
 - **"No OpenCode Go subscription on this key"** — the key is valid but this account isn't on Go. The
   spend tiles still work if you use Zen locally.
 - **"Couldn't read OpenCode's auth.json"** — the file exists but is unreadable or not valid JSON. Check
@@ -69,4 +78,6 @@ Bearer …`. The response is `{ usage: { rolling, weekly, monthly } }`, each wit
 Spend tiles and trend: assistant-message `cost` and token fields from every `opencode*.db` in the data
 directory (OpenCode partitions its database by release channel — stable is `opencode.db`, the preview
 line is `opencode-next.db` — so all channels are unioned). Both `opencode-go` (Go) and `opencode` (Zen)
-count. Read-only.
+count. OpenCode 1 logs to the `message` table and OpenCode 2 to `session_message`; both are read, and
+completed context compactions count too. OpenCode 2 copies old messages into the new table under the
+same ID, so each message is counted once. Read-only.

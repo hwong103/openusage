@@ -19,17 +19,92 @@ final class OpenCodeAuthStoreTests: XCTestCase {
         files: TextFileAccessing = FakeFiles(),
         credentials: [String: String] = [:],
         credentialTimes: [String: String] = [:],
-        failing: Set<String> = []
+        failing: Set<String> = [],
+        openCode1Tables: Set<String> = []
     ) -> OpenCodeAuthStore {
         openCodeAuthStore(
             files: files,
-            sqlite: OpenCodeFakeSQLite(failing: failing, credentials: credentials, credentialTimes: credentialTimes)
+            sqlite: OpenCodeFakeSQLite(
+                failing: failing,
+                credentials: credentials,
+                credentialTimes: credentialTimes,
+                openCode1CredentialTables: openCode1Tables
+            )
         )
     }
 
     /// `auth.json`-only stores see an OpenCode 1 database: the fake has no `credential` table there.
     private func openAICredential(_ store: OpenCodeAuthStore) throws -> OpenCodeAuthStore.OpenAICredential {
         try store.openAICredential(databasePath: stable)
+    }
+
+    private func goStore(
+        auth: String? = nil,
+        goKeys: [String: String] = [:],
+        credentials: [String: String] = [:],
+        failing: Set<String> = [],
+        openCode1Tables: Set<String> = [],
+        paths: [String] = ["/oc/opencode.db", "/oc/opencode-next.db"]
+    ) -> OpenCodeAuthStore {
+        openCodeAuthStore(
+            files: FakeFiles(auth.map { ["/oc/auth.json": $0] } ?? [:]),
+            sqlite: OpenCodeFakeSQLite(
+                failing: failing,
+                credentials: credentials,
+                goKeys: goKeys,
+                openCode1CredentialTables: openCode1Tables
+            ),
+            databasePaths: paths
+        )
+    }
+
+    private let staleAuth = #"{"opencode-go":{"type":"api","key":"sk-stale"}}"#
+
+    func testGoKeyPrefersCredentialTableOverStaleAuthFile() throws {
+        let store = goStore(auth: staleAuth, goKeys: ["/oc/opencode-next.db": " oc_sk_live "])
+        XCTAssertEqual(try store.goAPIKey(), "oc_sk_live")
+    }
+
+    func testGoLogoutInOpenCode2IsNotRevivedByAuthFile() throws {
+        XCTAssertNil(try goStore(auth: staleAuth, goKeys: ["/oc/opencode.db": ""]).goAPIKey())
+    }
+
+    func testGoKeyFallsBackToAuthFileWithoutCredentialTable() throws {
+        XCTAssertEqual(try goStore(auth: staleAuth).goAPIKey(), "sk-stale")
+    }
+
+    func testOpenCode1EmptyCredentialTableStillReadsGoKeyFromAuthFile() throws {
+        let store = goStore(
+            auth: #"{"opencode-go":{"type":"api","key":"sk-v1"}}"#,
+            openCode1Tables: [stable, "/oc/opencode-next.db"]
+        )
+        XCTAssertEqual(try store.goAPIKey(), "sk-v1")
+    }
+
+    func testOpenCode1EmptyCredentialTableStillReadsCodexOAuthFromAuthFile() throws {
+        let store = credentialStore(
+            files: FakeFiles(["/oc/auth.json": #"{"openai":{"type":"oauth","access":"access","refresh":"refresh"}}"#]),
+            openCode1Tables: [stable]
+        )
+        XCTAssertTrue(try openAICredential(store).isOAuth)
+    }
+
+    func testImportedChannelStillOverridesAuthFileAlongsideOpenCode1Channel() throws {
+        let next = "/oc/opencode-next.db"
+        let loggedOut = goStore(auth: staleAuth, goKeys: [next: ""], openCode1Tables: [stable])
+        XCTAssertNil(try loggedOut.goAPIKey())
+
+        let loggedIn = goStore(auth: staleAuth, goKeys: [next: "oc_live"], openCode1Tables: [stable])
+        XCTAssertEqual(try loggedIn.goAPIKey(), "oc_live")
+    }
+
+    func testUnreadableCredentialDatabaseThrowsInsteadOfFallingBack() {
+        let store = goStore(auth: staleAuth, goKeys: ["/oc/opencode.db": ""], failing: ["/oc/opencode-next.db"])
+        XCTAssertThrowsError(try store.goAPIKey()) { error in
+            guard case OpenCodeUsageError.credentialsUnreadable = error else {
+                return XCTFail("expected credentialsUnreadable, got \(error)")
+            }
+        }
     }
 
     func testReadsGoKey() throws {
@@ -150,6 +225,12 @@ final class OpenCodeAuthStoreTests: XCTestCase {
         XCTAssertTrue(sql.contains("(active IS NULL OR active = 1)"), sql)
         XCTAssertTrue(sql.contains("ORDER BY active DESC, time_updated DESC, id DESC"), sql)
         XCTAssertTrue(sql.contains("json_array"), sql)
+    }
+
+    func testCredentialsImportedProbeTargetsImportMigration() {
+        let sql = OpenCodeAuthStore.credentialsImportedSQL
+        XCTAssertTrue(sql.contains("FROM migration"), sql)
+        XCTAssertTrue(sql.contains("20260805200742_import_legacy_credentials"), sql)
     }
 
     func testEachChannelDatabaseIsJudgedByItsOwnCredential() throws {

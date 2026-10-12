@@ -25,18 +25,31 @@ import Foundation
 ///   is a re-emitted stale snapshot, not new usage, and is skipped even when it carries a
 ///   `last_token_usage`.
 /// - Early sessions without model metadata fall back to `gpt-5`. The `codex-auto-review` slug stays
-///   visible in usage breakdowns and carries a dated fallback model only for cost estimation.
+///   visible in usage breakdowns with its measured tokens. It uses dated model estimates before
+///   October 6, 2026 (00:00 UTC), and zero cost from then on.
 ///   The `gpt-reserve` slug (Luna Reserve fallback after regular usage is exhausted) stays visible
 ///   the same way and prices at `gpt-5.6-luna` rates.
 /// - Identical events (same timestamp + model + token counts) appearing in multiple files (copied
 ///   session logs) count once.
 /// - Cost per event: `(input - cached) x input rate + cached x cache-read rate + output x output
 ///   rate`, all x the model's Codex priority multiplier when the session ran on the fast/priority
-///   service tier. The tier is tracked per session from `thread_settings_applied` lines — never from
-///   the current `config.toml`, which would retroactively reprice the whole history when toggled.
-///   Events with no recorded tier price at standard rates. Supported GPT-5.4/5.5/5.6 requests above
-///   272k input tokens use OpenAI's higher rates for the whole request.
+///   service tier, or its Ultrafast multiplier (6x for GPT-6 Astra only). The tier is tracked per
+///   session from `thread_settings_applied` lines — never from the current `config.toml`, which would
+///   retroactively reprice the whole history when toggled. Events with no recorded tier price at
+///   standard rates. Supported GPT-5.4/5.5/5.6/6 requests above 272k input tokens use OpenAI's higher
+///   rates for the whole request.
 ///
+/// The Codex homes one scan reads.
+struct CodexLogHomes: Equatable, Sendable {
+    var read: [URL]
+    /// Homes another account owns. A session dir linked into one of them (xswap's shared history)
+    /// counts with that home, never twice.
+    var foreign: [URL] = []
+    /// The cache partition. Account cards all name every home, so ownership moving between cards
+    /// never re-parses.
+    var cache: [URL]
+}
+
 /// An actor for the same reasons as `ClaudeLogUsageScanner`: scans run off the main actor, and a
 /// versioned Application Support cache keyed by path + size + mtime makes both refreshes and relaunches
 /// re-parse only files that changed.
@@ -44,12 +57,11 @@ actor CodexLogUsageScanner {
     private let environment: EnvironmentReading
     private let homeDirectory: @Sendable () -> URL
     private let scanner: IncrementalJSONLScanner<Event>
-    private let allowsUnattributedHistory: Bool
     private let additionalHomes: [String]
 
     /// One turn's token usage, normalized from a `token_count` line (deltas already applied).
-    /// `isFast` records whether the session was on the fast/priority service tier when the turn
-    /// ran, tracked from the session's own log; absent tier metadata means standard.
+    /// `isFast` and `isUltrafast` record the service tier when the turn ran, tracked from the
+    /// session's own log; absent tier metadata means standard.
     struct Event: Codable, Sendable, Equatable {
         var timestamp: Date
         var model: String
@@ -60,13 +72,14 @@ actor CodexLogUsageScanner {
         var reasoning: Int
         var total: Int
         var isFast: Bool = false
+        var isUltrafast: Bool = false
     }
 
     /// Multi-account cards that resolve the same Codex homes share this actor and parse each rollout
     /// once. The version is the parser schema version; bump it when `Event` semantics change.
     private static let sharedScanner = IncrementalJSONLScanner<Event>(
         logTag: LogTag.plugin("codex"),
-        persistence: JSONLScanCachePersistence(namespace: "codex", schemaVersion: 4)
+        persistence: JSONLScanCachePersistence(namespace: "codex", schemaVersion: 6)
     )
 
     static func flushPersistentCacheWrites() async {
@@ -77,33 +90,32 @@ actor CodexLogUsageScanner {
         environment: EnvironmentReading = ProcessEnvironmentReader(),
         homeDirectory: @escaping @Sendable () -> URL = { FileManager.default.homeDirectoryForCurrentUser },
         incrementalScanner: IncrementalJSONLScanner<Event>? = nil,
-        allowsUnattributedHistory: Bool = true,
         additionalHomes: [String] = []
     ) {
         self.environment = environment
         self.homeDirectory = homeDirectory
         self.scanner = incrementalScanner ?? Self.sharedScanner
-        self.allowsUnattributedHistory = allowsUnattributedHistory
         self.additionalHomes = additionalHomes
     }
 
-    /// Scan the last `daysBack` days of Codex rollouts. Returns `nil` when no Codex home or no
-    /// session files exist (the spend tiles then render "No data").
+    /// Scan the last `daysBack` days of rollouts in every Codex home.
     func scan(
         daysBack: Int = 30, now: Date = Date(), pricing: ModelPricing, fallbackModel: String? = nil
     ) async -> LogUsageScan? {
-        // Codex rollouts identify conversations, not the account paying for each turn. xswap can
-        // resume the same conversation under another login, so even its home cannot prove ownership.
-        guard allowsUnattributedHistory else {
-            AppLog.info(LogTag.plugin("codex"), "local history excluded: multiple accounts are known and rollout ownership is unavailable")
-            return DailyUsageAccumulator().build()
-        }
-        let homes = codexHomes()
+        await scan(homes: allHomes(), daysBack: daysBack, now: now, pricing: pricing, fallbackModel: fallbackModel)
+    }
+
+    /// Scan the last `daysBack` days of rollouts in `homes`. Returns `nil` when no session files exist
+    /// (the spend tiles then render "No data").
+    func scan(
+        homes: CodexLogHomes, daysBack: Int = 30, now: Date = Date(), pricing: ModelPricing,
+        fallbackModel: String? = nil
+    ) async -> LogUsageScan? {
         let since = JSONLScanning.sinceDate(daysBack: daysBack, now: now)
-        let identityPaths = Set(homes.map { $0.resolvingSymlinksInPath().standardizedFileURL.path })
+        let identityPaths = Set(homes.cache.map { $0.resolvingSymlinksInPath().standardizedFileURL.path })
             .sorted()
         let identity = identityPaths.isEmpty ? "no-codex-home" : identityPaths.joined(separator: "\n")
-        let files = Self.sessionFiles(homes: homes)
+        let files = Self.sessionFiles(homes: homes.read, foreignHomes: homes.foreign)
         guard !files.isEmpty else {
             _ = await scanner.items(
                 from: [], since: since, cacheIdentity: identity, parse: Self.parseFile
@@ -123,8 +135,14 @@ actor CodexLogUsageScanner {
 
     // MARK: - Discovery
 
-    /// `CODEX_HOME` entries (comma-separated) when set, else `~/.codex` — same as ccusage.
-    private func codexHomes() -> [URL] {
+    func allHomes() -> CodexLogHomes {
+        let homes = codexHomes()
+        return CodexLogHomes(read: homes, cache: homes)
+    }
+
+    /// `CODEX_HOME` entries (comma-separated) when set, else `~/.codex` — same as ccusage — plus the
+    /// discovered homes handed in.
+    func codexHomes() -> [URL] {
         let extra = additionalHomes.map { URL(fileURLWithPath: expandHome($0)) }
         if let raw = environment.value(for: "CODEX_HOME")?.trimmingCharacters(in: .whitespacesAndNewlines),
            !raw.isEmpty {
@@ -139,9 +157,12 @@ actor CodexLogUsageScanner {
     /// Every rollout `*.jsonl` under each home's `sessions/` and `archived_sessions/` (a home with
     /// neither is scanned directly, ccusage's fallback). When both dirs of one home contain the same
     /// relative path, the `sessions/` copy wins — an archived duplicate must not double-count.
-    private static func sessionFiles(homes: [URL]) -> [JSONLScanning.DiscoveredFile] {
+    /// A dir linked into another account's home (xswap's shared history) counts only with that home.
+    /// A foreign path that is merely an alias of an owned home never shadows it.
+    private static func sessionFiles(homes: [URL], foreignHomes: [URL]) -> [JSONLScanning.DiscoveredFile] {
         var files: [JSONLScanning.DiscoveredFile] = []
-        var seenDirs: Set<String> = []
+        var seenDirs = Set(foreignHomes.flatMap(ownSessionDirs(of:)))
+            .subtracting(homes.flatMap(ownSessionDirs(of:)))
         for home in homes {
             var seenRelative: Set<String> = []
             var sourceDirs: [URL] = []
@@ -167,6 +188,16 @@ actor CodexLogUsageScanner {
             }
         }
         return files
+    }
+
+    /// The session dirs physically inside `home`. A dir that is itself a link points at another home's
+    /// history, which must not shadow this home's own logs.
+    private static func ownSessionDirs(of home: URL) -> [String] {
+        let root = home.resolvingSymlinksInPath()
+        return ["sessions", "archived_sessions"].compactMap { name in
+            let dir = home.appendingPathComponent(name).resolvingSymlinksInPath()
+            return dir.path == root.appendingPathComponent(name).path ? dir.path : nil
+        }
     }
 
     // MARK: - File parsing
@@ -277,33 +308,6 @@ actor CodexLogUsageScanner {
             model = "gpt-5"
         }
         return model
-    }
-
-    /// `codex-auto-review` release timeline (newest first), from ccusage's embedded snapshot: a
-    /// line dated on/after a release prices as that codex model.
-    ///
-    /// The `gpt-5.6-luna` entry is ours; ccusage's snapshot still stops at gpt-5.5. OpenAI moved
-    /// auto-review onto the GPT-5.6 family when it shipped on 2026-07-09, and the Codex model
-    /// catalog (`~/.codex/models_cache.json`) lists `codex-auto-review` with Luna's exact profile.
-    /// Without this entry every auto-review event since July prices at gpt-5.5 rates, which are 25x
-    /// Luna's across input, cache reads and output alike.
-    private static let autoReviewFallbacks: [(releasedOn: String, model: String)] = [
-        ("2026-07-09", "gpt-5.6-luna"),
-        ("2026-04-23", "gpt-5.5"),
-        ("2026-03-05", "gpt-5.4"),
-        ("2026-02-05", "gpt-5.3-codex"),
-        ("2025-12-11", "gpt-5.2-codex"),
-        ("2025-11-13", "gpt-5.1-codex"),
-        ("2025-09-15", "gpt-5-codex"),
-        ("2025-08-07", "gpt-5")
-    ]
-
-    static func autoReviewFallback(at timestamp: String) -> String {
-        let date = String(timestamp.prefix(10))
-        guard date.count == 10, date.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil else {
-            return "gpt-5"
-        }
-        return autoReviewFallbacks.first(where: { date >= $0.releasedOn })?.model ?? "gpt-5"
     }
 
     /// Luna Reserve keeps its `gpt-reserve` slug in breakdowns while using Luna's cost estimates.

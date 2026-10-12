@@ -33,6 +33,11 @@ final class ClaudeProvider: ProviderRuntime {
     private var lastGoodUsage: ClaudeMappedUsage?
     private var rateLimitedUntil: Date?
     private static let rateLimitCooldown: TimeInterval = 5 * 60
+    /// The account-stamped snapshot painted from the launch cache (see `adoptLaunchSnapshot`). Held in
+    /// memory only, so the first 429 after a relaunch can keep the painted limits instead of a bare badge.
+    /// A successful live fetch discards it; only a login verified against the card's account consumes it.
+    private var pendingLaunchSnapshot: ProviderSnapshot?
+    var resetGrantsCheck: ClaudeResetGrantsCheck?
 
     /// The plan Anthropic's profile endpoint reports for the current access token. Claude Code stamps
     /// `subscriptionType` / `rateLimitTier` into the login at sign-in and never updates them (a token refresh
@@ -93,6 +98,10 @@ final class ClaudeProvider: ProviderRuntime {
                     sourceNote: "From your Claude usage history (estimated)"
                 )
         ] + WidgetDescriptor.spendTiles(provider: provider)
+    }
+
+    func adoptLaunchSnapshot(_ snapshot: ProviderSnapshot) {
+        pendingLaunchSnapshot = snapshot
     }
 
     func hasLocalCredentials() async -> Bool {
@@ -426,37 +435,42 @@ final class ClaudeProvider: ProviderRuntime {
         )
 
         let forceDesktopGeneration = working.source == .desktop
-        let currentGeneration = await loadOffMainActor { [authStore] in
-            authStore.credentialGeneration(forceDesktopFallback: forceDesktopGeneration)
-        }
-        guard currentGeneration == expectedGeneration else { throw ClaudeAuthError.credentialsChanged }
+        try await checkCredentialGeneration(expectedGeneration, forceDesktopFallback: forceDesktopGeneration)
 
         // 429 can come back from either attempt; the helper hands both through unchanged. Start a cooldown
         // (respecting Retry-After) and serve the last-good usage rather than a bare badge.
         if response.statusCode == 429 {
             let retryAfterSeconds = ClaudeUsageMapper.parseRetryAfterSeconds(response, now: now())
             rateLimitedUntil = now().addingTimeInterval(TimeInterval(retryAfterSeconds ?? Int(Self.rateLimitCooldown)))
+            adoptPendingLaunchUsageIfVerified(credentials: working.oauth)
             AppLog.info(LogTag.plugin("claude"), "rate-limited (serving \(lastGoodUsage == nil ? "badge" : "last-good usage"))")
             return rateLimitedSnapshot(credentials: working.oauth, retryAfterSeconds: retryAfterSeconds)
         }
 
         var mapped = try ClaudeUsageMapper.mapUsageResponse(response, credentials: working.oauth, now: now())
+        if let resetGrants = try await resetGrantsLine(
+            credentials: working.oauth, expectedGeneration: expectedGeneration,
+            forceDesktopFallback: forceDesktopGeneration
+        ) {
+            mapped.lines.append(resetGrants)
+        }
         // Only after the usage call succeeded: the token is known-good, so a profile failure here is a
         // label problem, never an auth signal, and it must not take the bars down with it.
         if let plan = await resolveLivePlan(credentials: working.oauth) {
             mapped.plan = plan
         }
+        try await checkCredentialGeneration(expectedGeneration, forceDesktopFallback: forceDesktopGeneration)
         lastGoodUsage = mapped
         rateLimitedUntil = nil
+        pendingLaunchSnapshot = nil
         return mapped
     }
 
     private func verifyAccountIfNeeded(credentials: ClaudeOAuth) async throws -> HTTPResponse? {
         guard let identity = authStore.expectedIdentityKey,
-              identity.split(separator: "|").count == 2
+              let fingerprint = verificationFingerprint(credentials)
         else { return nil }
         let accessToken = credentials.accessToken ?? ""
-        let fingerprint = Data(SHA256.hash(data: Data("\(identity)\u{0}\(accessToken)".utf8)))
         guard verifiedCredentialFingerprint != fingerprint else { return nil }
         switch try await usageClient.verifyAccount(
             accessToken: accessToken, expectedIdentityKey: identity, config: authStore.oauthConfig()
@@ -470,6 +484,50 @@ final class ClaudeProvider: ProviderRuntime {
             rememberLivePlan(from: profile, credentials: credentials)
             return nil
         }
+    }
+
+    /// Account + organization identity bound to the access token; `nil` when the card has no complete
+    /// identity to verify against.
+    private func verificationFingerprint(_ credentials: ClaudeOAuth) -> Data? {
+        guard let identity = authStore.expectedIdentityKey,
+              identity.split(separator: "|").count == 2
+        else { return nil }
+        let accessToken = credentials.accessToken ?? ""
+        return Data(SHA256.hash(data: Data("\(identity)\u{0}\(accessToken)".utf8)))
+    }
+
+    /// Seeds `lastGoodUsage` from the launch snapshot for a relaunch's first 429, but only for a login
+    /// this process verified against the card's account and organization. Local spend tiles and any
+    /// earlier rate-limit notice are left out (`snapshotWithLocalUsage` recomputes the tiles), and a
+    /// window whose reset has already passed is dropped rather than shown with its pre-reset value, as is
+    /// any reset grant whose deadline has passed.
+    private func adoptPendingLaunchUsageIfVerified(credentials: ClaudeOAuth) {
+        guard lastGoodUsage == nil,
+              let snapshot = pendingLaunchSnapshot,
+              let fingerprint = verificationFingerprint(credentials),
+              verifiedCredentialFingerprint == fingerprint
+        else { return }
+        pendingLaunchSnapshot = nil
+        let now = now()
+        let lines = snapshot.lines.compactMap { line -> MetricLine? in
+            guard ClaudeUsageMapper.liveLimitLabels.contains(line.label) else { return nil }
+            switch line {
+            case .progress(_, _, _, _, let resetsAt?, _, _) where resetsAt <= now:
+                return nil
+            default:
+                return ClaudeUsageMapper.droppingElapsedResetGrants(line, now: now)
+            }
+        }
+        guard !lines.isEmpty else { return }
+        AppLog.info(LogTag.plugin("claude"), "rate-limited after launch; keeping cached limits")
+        lastGoodUsage = ClaudeMappedUsage(
+            plan: cachedLivePlan(for: credentials) ?? snapshot.plan
+                ?? ClaudeUsageMapper.formatPlan(
+                    subscriptionType: credentials.subscriptionType,
+                    rateLimitTier: credentials.rateLimitTier
+                ),
+            lines: lines
+        )
     }
 
     /// Live plan for the given login, fetching the profile at most once per access token.
@@ -544,7 +602,7 @@ final class ClaudeProvider: ProviderRuntime {
         rateLimitedUntil = nil
     }
 
-    private static func credentialFingerprint(_ credentials: ClaudeOAuth) -> Data {
+    static func credentialFingerprint(_ credentials: ClaudeOAuth) -> Data {
         let access = Data((credentials.accessToken ?? "").utf8)
         let refresh = Data((credentials.refreshToken ?? "").utf8)
         var pair = Data(SHA256.hash(data: access))
@@ -609,6 +667,9 @@ final class ClaudeProvider: ProviderRuntime {
         }
         if cachedCredentialFingerprint == Self.credentialFingerprint(previousOAuth) {
             cachedCredentialFingerprint = Self.credentialFingerprint(state.oauth)
+        }
+        if resetGrantsCheck?.credentialFingerprint == Self.credentialFingerprint(previousOAuth) {
+            resetGrantsCheck?.credentialFingerprint = Self.credentialFingerprint(state.oauth)
         }
         AppLog.info(LogTag.auth("claude"), "token refresh ok (rotated)")
         return RefreshedAccess(accessToken: decoded.accessToken, persisted: persisted)

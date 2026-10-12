@@ -64,7 +64,7 @@ final class WidgetDataStore {
     /// the per-request timeouts a healthy provider can legitimately spend, or a slow network would turn
     /// working providers into errors. The worst legitimate case is Cursor, whose probe is sequential:
     /// token refresh (15s) → usage (10s, plus a 401 refresh-and-retry of another 25s) → plan (10s) →
-    /// usage summary (10s) → credits (10s) → usage CSV (30s), i.e. up to ~110s. Slowness short of the
+    /// usage summary (10s) → credits (10s) → spend history (20s), i.e. up to ~100s. Slowness short of the
     /// deadline is already reported separately by `slowProviderRefreshThreshold`.
     static let defaultProviderRefreshTimeout: TimeInterval = 120
 
@@ -176,7 +176,6 @@ final class WidgetDataStore {
         // paint under the new account until the first successful refresh. A card whose current
         // identity is unresolved (logged out, keyring-mode Codex) can't be verified either way — it
         // keeps its cache, exactly as before the guard existed. Non-account providers are unaffected.
-        cache.removeExcludedHistory(for: providers)
         let loaded = cache.loadSnapshots(providerIDs: registry.providers.map(\.id))
             .filter { cardID, _ in
                 guard cache.hasStaleAccountStamp(providerID: cardID, currentIdentityKey: providerIdentityKeys[cardID]) else {
@@ -187,6 +186,13 @@ final class WidgetDataStore {
             }
         self.localSnapshots = loaded
         self.snapshots = loaded
+        // Only a snapshot the card's current account provably produced may seed a provider's fallback.
+        for (cardID, snapshot) in loaded {
+            guard let identity = providerIdentityKeys[cardID],
+                  cache.producedByIdentityKey(providerID: cardID) == identity
+            else { continue }
+            providersByID[cardID]?.adoptLaunchSnapshot(snapshot)
+        }
     }
 
     /// Refresh every enabled provider, concurrently — one slow provider never delays the rest.

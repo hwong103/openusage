@@ -7,7 +7,7 @@ enum ProviderCatalog {
     static func make(
         defaults: UserDefaults = .standard,
         claudeCards: [ClaudeAccountCard] = [],
-        codexCards: [CodexAccountCard] = [],
+        codex: CodexAccountDiscovery = CodexAccountDiscovery(),
         claudeIdentityKeys: [String: String] = [:]
     ) -> [ProviderRuntime] {
         // Default provider order (see AGENTS.md "## Providers"): the three established providers first,
@@ -46,18 +46,26 @@ enum ProviderCatalog {
                 )
             }
         }
-        if codexCards.isEmpty {
-            providers.append(CodexProvider())
+        if codex.cards.isEmpty {
+            providers.append(CodexProvider(
+                authStore: CodexAuthStore(
+                    additionalAuthHomes: codex.plainAuthHomes,
+                    writableAuthHomes: Set(codex.plainWritableAuthHomes),
+                    piCredentialSources: codex.plainPiCredentialSources
+                ),
+                logUsageScanner: CodexLogUsageScanner(additionalHomes: codex.plainAuthHomes)
+            ))
         } else {
-            providers += codexCards.map { card in
+            providers += codex.cards.map { card in
                 CodexProvider(
                     provider: CodexProvider.makeProvider(id: card.id, displayName: card.displayName),
-                    authStore: CodexAuthStore(expectedIdentity: card.identity, additionalAuthHomes: card.authHomes),
-                    logUsageScanner: CodexLogUsageScanner(
-                        allowsUnattributedHistory: card.allowsUnattributedHistory,
-                        additionalHomes: card.logHomes
+                    authStore: CodexAuthStore(
+                        expectedIdentity: card.identity,
+                        additionalAuthHomes: card.authHomes,
+                        writableAuthHomes: Set(card.writableAuthHomes),
+                        piCredentialSources: card.piCredentialSources
                     ),
-                    allowsUnattributedHistory: card.allowsUnattributedHistory
+                    historyScope: .account(card.identity, codex.historyHomes, claimsPiUsage: card.claimsPiUsage)
                 )
             }
         }

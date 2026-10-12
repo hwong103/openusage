@@ -12,6 +12,10 @@ final class OllamaProvider: ProviderRuntime {
         ]
     )
 
+    /// One notice for every way the plan can go missing, so a failed request and an unreadable response
+    /// read the same to the user — the badge is gone for a reason, and the meters are still current.
+    private static let planWarning = "Couldn't read your Ollama plan. Usage below is still up to date."
+
     let authStore: OllamaAuthStore
     let usageClient: OllamaUsageClient
     let now: @Sendable () -> Date
@@ -28,27 +32,19 @@ final class OllamaProvider: ProviderRuntime {
 
     var widgetDescriptors: [WidgetDescriptor] {
         [
-            // Not `isSessionWindow`: that treatment ("Not started" on a fresh pool) needs a reset date,
-            // and Ollama publishes none — see `OllamaUsageMapper`.
+            // Session and Weekly exist only on legacy plans; current plans get monthly credits instead.
             .percent(id: "ollama.session", provider: provider, title: "Session",
                      metricLabel: "Session")
                 .exportingLimit("session", unit: "percent"),
             .percent(id: "ollama.weekly", provider: provider, title: "Weekly",
                      metricLabel: "Weekly")
                 .exportingLimit("weekly", unit: "percent"),
-            .percent(id: "ollama.monthly", provider: provider, title: "Monthly",
-                     metricLabel: "Monthly")
-                .exportingLimit("monthly", unit: "percent"),
-            // Ollama reports recent spend as a single rolling four-week total, not a daily history, so
-            // this is one unbounded dollar row rather than the Today/Yesterday/Last 30 Days tiles the
-            // local-scanner providers ship.
-            //
-            // Deliberately not `isUsagePeriod`: that marks a row where $0.00 means nothing was used, and
-            // this row counts charges *beyond* the plan. A subscriber can run Ollama hard all month and
-            // still sit at $0.00, so the "No usage in this period" hover would be plainly wrong.
-            .values(id: "ollama.last4Weeks", provider: provider, title: "Last 4 Weeks",
-                    metricLabel: "Last 4 Weeks", selection: .kind(.dollars),
-                    valueWord: "spent")
+            .boundedDollars(id: "ollama.monthly", provider: provider, title: "Monthly",
+                            metricLabel: "Monthly", limit: 60, limitNoun: "included")
+                .exportingLimit("monthly", unit: "usd"),
+            .dollarBalance(id: "ollama.purchasedCredits", provider: provider, title: "Purchased Credits",
+                           metricLabel: "Purchased Credits", valueWord: "left")
+                .exportingLimit("purchasedCredits", kind: .balance, unit: "usd", source: .value(kind: .dollars))
         ]
     }
 
@@ -74,9 +70,9 @@ final class OllamaProvider: ProviderRuntime {
             return ProviderSnapshot.error(provider: provider, error: OllamaAuthError.missingKey)
         }
 
-        // The usage endpoint is required; the account endpoint is best-effort (plan name only), so a
+        // The balance endpoint is required; the account endpoint is best-effort (plan name only), so a
         // failure there must not blank out the meters.
-        let usage = await load { try await usageClient.fetchUsage(key: key) }
+        let balance = await load { try await usageClient.fetchBalance(key: key) }
         let account = await loadAccount { try await usageClient.fetchAccount(key: key) }
 
         var accountBody: Data?
@@ -89,14 +85,21 @@ final class OllamaProvider: ProviderRuntime {
             // looks like an account that has no plan. Log it and carry an amber notice so the missing
             // badge is explained, while the meters below still refresh normally.
             AppLog.warn(.refresh, "ollama plan lookup failed (\(error.errorCategory.rawValue)); meters unaffected")
-            warning = "Couldn't read your Ollama plan. Usage below is still up to date."
+            warning = Self.planWarning
         }
 
-        switch usage {
+        switch balance {
         case .success(let body):
             do {
-                let mapped = try OllamaUsageMapper.map(usageBody: body, accountBody: accountBody)
-                return ProviderSnapshot.make(provider: provider, plan: mapped.plan, lines: mapped.lines,
+                let mapped = try OllamaUsageMapper.map(balanceBody: body, accountBody: accountBody)
+                // A 200 carrying a body OpenUsage can't read drops the badge exactly as silently as a
+                // failed request did, so it earns the same notice. An account that simply has no plan
+                // (`.absent`) stays quiet — that is ordinary, not a fault.
+                if warning == nil, mapped.plan == .unreadable {
+                    AppLog.warn(.refresh, "ollama plan response unreadable; meters unaffected")
+                    warning = Self.planWarning
+                }
+                return ProviderSnapshot.make(provider: provider, plan: mapped.plan.name, lines: mapped.lines,
                                              refreshedAt: now(), warning: warning)
             } catch {
                 return ProviderSnapshot.error(provider: provider, error: error)
@@ -110,7 +113,7 @@ final class OllamaProvider: ProviderRuntime {
         }
     }
 
-    /// Run the required usage call and classify the outcome: the body on 2xx, an auth failure on
+    /// Run the required balance call and classify the outcome: the body on 2xx, an auth failure on
     /// 401/403, or a typed failure for any other non-2xx or transport error.
     private func load(_ call: () async throws -> HTTPResponse) async -> UsageResult {
         do {
