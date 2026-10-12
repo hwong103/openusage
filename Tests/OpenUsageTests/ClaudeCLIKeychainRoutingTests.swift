@@ -16,15 +16,15 @@ final class ClaudeCLIKeychainRoutingTests: XCTestCase {
         XCTAssertTrue(ClaudeAuthStore().keychain is ClaudeCLIKeychainAccessor)
     }
 
-    func testLoadReadsTheClaudeServiceThroughTheInjectedAccessor() {
+    func testLoadReadsTheClaudeServiceThroughTheInjectedAccessor() throws {
         let service = "Claude Code-credentials"
         let keychain = ServiceKeychain(currentUserValues: [service: Self.credentialBlob])
         let store = makeStore(keychain: keychain)
 
-        let candidate = store.loadCredentialSet().candidates.first
+        let candidate = try XCTUnwrap(store.loadCredentialSet().candidates.first)
 
-        XCTAssertEqual(candidate?.source, ClaudeCredentialState.Source.keychainCurrentUser(service: service))
-        XCTAssertEqual(candidate?.oauth.accessToken, "old-access")
+        XCTAssertEqual(candidate.source, ClaudeCredentialState.Source.keychainCurrentUser(service: service))
+        XCTAssertEqual(candidate.oauth.accessToken, "old-access" as String?)
     }
 
     func testRotationWritePersistsThroughTheInjectedAccessor() throws {

@@ -14,11 +14,10 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
         let runner = ScriptedProcessRunner(results: [.init(exitCode: 0, stdout: "synthetic-blob\n", stderr: "")])
         let accessor = ClaudeCLIKeychainAccessor(processRunner: runner)
 
-        XCTAssertEqual(try accessor.readGenericPassword(service: Self.service), "synthetic-blob")
+        XCTAssertEqual(try accessor.readGenericPassword(service: Self.service), "synthetic-blob" as String?)
         XCTAssertEqual(runner.invocations.map(\.executable), ["/usr/bin/security"])
-        XCTAssertEqual(runner.invocations.first?.arguments, [
-            "find-generic-password", "-s", Self.service, "-w",
-        ])
+        let arguments = try XCTUnwrap(runner.invocations.first?.arguments)
+        XCTAssertEqual(arguments, ["find-generic-password", "-s", Self.service, "-w"])
     }
 
     func testCurrentUserReadScopesByAccount() throws {
@@ -29,7 +28,7 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
 
         let arguments = try XCTUnwrap(runner.invocations.first?.arguments)
         XCTAssertEqual(Array(arguments.prefix(4)), ["find-generic-password", "-a", NSUserName(), "-s"])
-        XCTAssertEqual(arguments.last, "-w")
+        XCTAssertEqual(arguments.last, "-w" as String?)
     }
 
     func testMissingItemExitCodeReturnsNilWithoutThrow() throws {
@@ -61,8 +60,9 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
 
         try accessor.writeGenericPasswordForCurrentUser(service: Self.service, value: "rotated-blob")
 
-        XCTAssertEqual(runner.invocations.first?.executable, "/usr/bin/security")
-        XCTAssertEqual(runner.invocations.first?.arguments, [
+        let invocation = try XCTUnwrap(runner.invocations.first)
+        XCTAssertEqual(invocation.executable, "/usr/bin/security")
+        XCTAssertEqual(invocation.arguments, [
             "add-generic-password", "-U", "-a", NSUserName(), "-s", Self.service, "-w", "rotated-blob",
         ])
     }
@@ -73,7 +73,8 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
 
         try accessor.writeGenericPassword(service: Self.service, value: "rotated-blob")
 
-        XCTAssertEqual(runner.invocations.first?.arguments, [
+        let invocation = try XCTUnwrap(runner.invocations.first)
+        XCTAssertEqual(invocation.arguments, [
             "add-generic-password", "-U", "-s", Self.service, "-w", "rotated-blob",
         ])
     }
@@ -95,14 +96,20 @@ final class ClaudeCLIKeychainAccessorTests: XCTestCase {
 final class SystemSecurityItemAccessorInteractionTests: XCTestCase {
     func testSecretReadQueryForbidsInteraction() {
         let query = SystemSecurityItemAccessor.secretReadQuery(service: "Claude Code-credentials", account: nil)
-        XCTAssertEqual(query[kSecUseAuthenticationUI as String] as? String, kSecUseAuthenticationUIFail)
+        XCTAssertEqual(
+            query[kSecUseAuthenticationUI as String] as? String,
+            kSecUseAuthenticationUIFail as String
+        )
         XCTAssertNil(query[kSecAttrAccount as String])
     }
 
     func testSecretReadQueryCarriesExplicitAccount() {
         let query = SystemSecurityItemAccessor.secretReadQuery(service: "Codex Auth", account: "cli|abc")
-        XCTAssertEqual(query[kSecUseAuthenticationUI as String] as? String, kSecUseAuthenticationUIFail)
-        XCTAssertEqual(query[kSecAttrAccount as String] as? String, "cli|abc")
+        XCTAssertEqual(
+            query[kSecUseAuthenticationUI as String] as? String,
+            kSecUseAuthenticationUIFail as String
+        )
+        XCTAssertEqual(query[kSecAttrAccount as String] as? String, "cli|abc" as String?)
     }
 }
 
