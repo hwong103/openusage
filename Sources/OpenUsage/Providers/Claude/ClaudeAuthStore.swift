@@ -88,7 +88,12 @@ struct ClaudeAuthStore: Sendable {
     init(
         environment: EnvironmentReading = ProcessEnvironmentReader(),
         files: TextFileAccessing = LocalTextFileAccessor(),
-        keychain: KeychainAccessing = SecurityKeychainAccessor(),
+        // The Claude CLI's own `Claude Code*` items carry an `apple-tool:` ACL partition, which a
+        // locally-signed build can never match in-process — that mismatch is what raises the recurring
+        // Keychain password prompt. Read and write them through the Apple-signed `/usr/bin/security`
+        // tool instead; see `ClaudeCLIKeychainAccessor`. Every other provider keeps the in-process
+        // accessor.
+        keychain: KeychainAccessing = ClaudeCLIKeychainAccessor(),
         desktop: ClaudeDesktopAuthStore? = nil,
         desktopOrganization: String? = nil,
         expectedIdentityKey: String? = nil,

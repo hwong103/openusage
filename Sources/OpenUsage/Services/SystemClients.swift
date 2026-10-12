@@ -292,18 +292,27 @@ protocol SecurityItemAccessing: Sendable {
 }
 
 struct SystemSecurityItemAccessor: SecurityItemAccessing {
-    func readGenericPasswordData(service: String, account: String?) -> (status: OSStatus, data: Data?) {
+    /// Background reads must never raise UI. Every secret read in this app starts from a refresh or a
+    /// launch probe — there is no user-initiated "reveal my credential" action — so the query forbids
+    /// interaction (`kSecUseAuthenticationUIFail`) and a locked/unauthorized item fails fast with
+    /// `errSecInteractionNotAllowed` instead of opening a Keychain password modal. Callers surface that
+    /// as an error in the UI. Kept in one builder so a test can assert the policy.
+    static func secretReadQuery(service: String, account: String?) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnData as String: true,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIAllow,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
         ]
         if let account {
             query[kSecAttrAccount as String] = account
         }
+        return query
+    }
 
+    func readGenericPasswordData(service: String, account: String?) -> (status: OSStatus, data: Data?) {
+        let query = Self.secretReadQuery(service: service, account: account)
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         return (status, result as? Data)
@@ -315,6 +324,9 @@ struct SystemSecurityItemAccessor: SecurityItemAccessing {
             kSecAttrService as String: service,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnAttributes as String: true,
+            // The attributes probe runs on the same background paths as the secret read; forbid UI here
+            // too so an unauthorized item fails fast rather than prompting.
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
         ]
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -344,6 +356,103 @@ struct SystemSecurityItemAccessor: SecurityItemAccessing {
             query[kSecAttrAccount as String] = account
         }
         return query
+    }
+}
+
+/// Reads and writes the Claude Code **CLI** credential items through Apple's `/usr/bin/security` tool.
+///
+/// The CLI stores `Claude Code-credentials` (and its `Claude Code*` variants) with an ACL partition of
+/// `apple-tool:` because `/usr/bin/security` created it. A locally-signed build has no
+/// `keychain-access-groups` / `application-identifier` entitlement, so an in-process
+/// `SecItemCopyMatching` can never match that partition: macOS raises a Keychain password prompt on
+/// every refresh, and the XARA "always allow" grant it leaves behind is tied to item state, so it dies
+/// the moment either the CLI or the app rewrites the blob. The `/usr/bin/security` subprocess is
+/// Apple-signed, so its partition matches and the same read is silent — this is how the reader worked
+/// before `bb7de176` moved it in-process, scoped here to just the Claude CLI services.
+///
+/// Everything else (the app's own iCloud items, Codex, Cursor) keeps using `SecurityKeychainAccessor`.
+struct ClaudeCLIKeychainAccessor: KeychainAccessing {
+    /// `security find-generic-password` exits 44 (`errSecItemNotFound`) when nothing matches — the
+    /// legitimate "no credential stored" case. Any other non-zero exit is a real failure (locked
+    /// keychain, denied read) that must not be silently rendered as "not signed in".
+    private static let itemNotFoundExitCode: Int32 = 44
+    private static let securityTool = "/usr/bin/security"
+    private static let timeout: TimeInterval = 5
+
+    let processRunner: any ProcessRunning
+
+    init(processRunner: any ProcessRunning = SystemProcessRunner()) {
+        self.processRunner = processRunner
+    }
+
+    func readGenericPassword(service: String) throws -> String? {
+        try readPassword(["find-generic-password", "-s", service, "-w"], service: service)
+    }
+
+    func readGenericPasswordForCurrentUser(service: String) throws -> String? {
+        try readPassword(
+            ["find-generic-password", "-a", currentUserAccount(), "-s", service, "-w"],
+            service: service
+        )
+    }
+
+    func readGenericPassword(service: String, account: String) throws -> String? {
+        try readPassword(["find-generic-password", "-a", account, "-s", service, "-w"], service: service)
+    }
+
+    func writeGenericPassword(service: String, value: String) throws {
+        try writePassword(["add-generic-password", "-U", "-s", service, "-w", value], service: service)
+    }
+
+    func writeGenericPassword(service: String, account: String, value: String) throws {
+        try writePassword(
+            ["add-generic-password", "-U", "-a", account, "-s", service, "-w", value],
+            service: service
+        )
+    }
+
+    func writeGenericPasswordForCurrentUser(service: String, value: String) throws {
+        try writePassword(
+            ["add-generic-password", "-U", "-a", currentUserAccount(), "-s", service, "-w", value],
+            service: service
+        )
+    }
+
+    private func readPassword(_ arguments: [String], service: String) throws -> String? {
+        let result = try runSecurity(arguments)
+        guard result.succeeded else {
+            if result.exitCode == Self.itemNotFoundExitCode {
+                // The store already logs its own "read miss" per candidate source; stay quiet here.
+                return nil
+            }
+            // Log the service and exit code only — never the credential material.
+            AppLog.warn(.keychain, "read failed for service '\(service)' (exit \(result.exitCode))")
+            throw KeychainError.readFailed(result.stderr)
+        }
+        let value = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private func writePassword(_ arguments: [String], service: String) throws {
+        let result = try runSecurity(arguments)
+        guard result.succeeded else {
+            AppLog.warn(.keychain, "write failed for service '\(service)' (exit \(result.exitCode))")
+            throw KeychainError.writeFailed(result.stderr)
+        }
+    }
+
+    private func runSecurity(_ arguments: [String]) throws -> ProcessResult {
+        try processRunner.run(
+            executable: Self.securityTool,
+            arguments: arguments,
+            environment: [:],
+            timeout: Self.timeout
+        )
+    }
+
+    private func currentUserAccount() -> String {
+        ProcessInfo.processInfo.environment["USER"]?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        ?? NSUserName()
     }
 }
 
