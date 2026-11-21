@@ -8,10 +8,11 @@ set -euo pipefail
 #   script/openusage-dev-bootstrap.sh <full-commit-sha>
 
 COMMIT="${1:-}"
-if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+if [[ ! "$COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "Usage: $0 <full-commit-sha>" >&2
   exit 2
 fi
+COMMIT="$(printf '%s' "$COMMIT" | tr '[:upper:]' '[:lower:]')"
 
 REPOSITORY="${OPENUSAGE_REPOSITORY:-https://github.com/hwong103/openusage.git}"
 BRANCH="${OPENUSAGE_BRANCH:-main}"
