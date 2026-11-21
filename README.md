@@ -33,6 +33,7 @@ The app updates itself with signed, notarized [Sparkle](docs/updates.md) updates
 - **[Amp](docs/providers.md#amp)**: agent usage, orb hours, Amp Free, credits
 - **[Antigravity](docs/providers.md#antigravity)**: Gemini and Claude quotas
 - **[Copilot](docs/providers.md#copilot)**: credits, extra usage, chat, completions, organization billing, GitHub Enterprise on GHE.com
+- **[Command Code](docs/providers.md#command-code)**: session, weekly, monthly, balance, requests, daily spend and tokens
 - **[Devin](docs/providers.md#devin)**: daily and weekly quota, extra usage
 - **[Grok](docs/providers.md#grok)**: weekly limit, extra usage
 - **[Muse Code](docs/providers.md#muse-code)**: session, weekly
@@ -43,8 +44,8 @@ The app updates itself with signed, notarized [Sparkle](docs/updates.md) updates
 - **[CLIProxyAPI hubs](docs/cliproxyapi.md)**: every Claude, ChatGPT, Antigravity, Devin, and Grok login on
   a [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) server
 
-Add your accounts from the app's Accounts screen. OpenUsage never reads other tools' credentials,
-files, or logs. See [Accounts](docs/accounts.md). Coming from 0.7.x? See
+Add your accounts from the app's Accounts screen. A Command Code API key is stored in OpenUsage's
+Keychain and read only for that account. See [Accounts](docs/accounts.md). Coming from 0.7.x? See
 [Upgrading from 0.7.x](docs/settings.md#upgrading-from-07x).
 
 ## Features

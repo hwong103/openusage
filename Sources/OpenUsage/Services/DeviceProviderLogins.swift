@@ -283,7 +283,7 @@ enum ProviderLoginCatalog {
         case .grok: GrokLogin()
         case .muse: MuseLogin()
         case .opencodeGo: OpenCodeLogin()
-        case .ollama, .openrouter, .zai: APIKeyLogin(kind: kind)
+        case .ollama, .openrouter, .zai, .commandcode: APIKeyLogin(kind: kind)
         }
     }
 }

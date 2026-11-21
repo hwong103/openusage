@@ -88,7 +88,7 @@ final class AccountProviderRuntime: ProviderRuntime {
             items = expiries.map { ResetItem(kind: .full, expiresAt: $0, claim: .codexCredit($0)) }
         case .zai:
             items = ZAIResetsMapper.items(unexpiredZAIResets ?? [])
-        case .cursor, .amp, .antigravity, .copilot, .devin, .grok, .muse, .ollama, .opencodeGo, .openrouter:
+        case .cursor, .amp, .antigravity, .commandcode, .copilot, .devin, .grok, .muse, .ollama, .opencodeGo, .openrouter:
             return nil
         }
         return ResetClaimService(accountID: account.cardID, items: items, claimReset: { [self] claim, requestID in
@@ -104,7 +104,7 @@ final class AccountProviderRuntime: ProviderRuntime {
         switch account.kind {
         case .claude: restoreClaude(snapshot)
         case .muse: museLastKnown = snapshot.lines
-        case .codex, .cursor, .amp, .antigravity, .copilot, .devin, .grok, .ollama, .opencodeGo, .openrouter, .zai: break
+        case .codex, .cursor, .amp, .antigravity, .commandcode, .copilot, .devin, .grok, .ollama, .opencodeGo, .openrouter, .zai: break
         }
     }
 
@@ -153,6 +153,7 @@ final class AccountProviderRuntime: ProviderRuntime {
             case .cursor: try await refreshCursor(credential)
             case .amp: try await refreshAmp(credential)
             case .antigravity: try await refreshAntigravity(credential)
+            case .commandcode: try await refreshCommandCode(credential)
             case .copilot: try await refreshCopilot(credential)
             case .devin: try await refreshDevin(credential)
             case .grok: try await refreshGrok(credential)

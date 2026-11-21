@@ -294,6 +294,7 @@ final class LimitsEnvelopeTests: XCTestCase {
             "cursor": ["totalUsage", "grokBot", "autoUsage", "apiUsage", "onDemand", "requests", "credits"],
             "amp": ["agentUsage", "orbHours", "free", "credits"],
             "antigravity": ["geminiSession", "geminiWeekly", "argonWeekly", "nonGeminiSession", "nonGeminiWeekly"],
+            "commandcode": ["session", "weekly", "monthly", "balance", "requests"],
             "copilot": ["premiumCredits", "extraUsage", "chat", "completions"],
             "devin": ["daily", "weekly", "extraUsageBalance"],
             "grok": ["weekly"],

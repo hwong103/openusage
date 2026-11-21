@@ -106,6 +106,10 @@ The dev build disables these. See [Updates](updates.md).
   does this only if the provider has no account yet, 0.7.x had it on, and a usage read accepts the
   key. It never reads a key for a provider you turned off. A rejected key isn't tried again. Other
   failures retry on the next launch. An account you remove later doesn't come back.
+- **Command Code fork builds.** The `com.robinebers.openusage.dev` development identity imports one
+  existing Command Code key, from the environment, `~/.commandcode/auth.json`, or this fork's
+  router key. It saves the accepted key in OpenUsage's Keychain and never reads those external paths
+  again. The official `com.robinebers.openusage` app does not run this migration.
 - **Layout.** When you add the only account of a provider that was on in 0.7.x, it takes 0.7.x's
   hidden metrics, metric order, and provider order. New metrics start shown and go last. Stars don't
   carry over: the menu bar picks its own limits.

@@ -154,7 +154,10 @@ final class PriorityBoardTests: XCTestCase {
                 if descriptor.balance(in: data) != nil { balances.append(descriptor.kindScopedKey) }
             }
         }
-        XCTAssertEqual(balances.sorted(), ["amp.credits", "codex.credits", "cursor.credits", "devin.extra", "ollama.purchasedCredits", "openrouter.balance"])
+        XCTAssertEqual(balances.sorted(), [
+            "amp.credits", "codex.credits", "commandcode.balance", "cursor.credits",
+            "devin.extra", "ollama.purchasedCredits", "openrouter.balance"
+        ])
     }
 
     func testAnOpenBalanceAtZeroIsUsedUpAndShowsItsAmountInsteadOfATime() throws {
@@ -252,7 +255,8 @@ final class PriorityBoardTests: XCTestCase {
     func testNothingButABalanceReachesUsedUpAtZero() {
         for kind in ProviderKind.allCases {
             for descriptor in realDescriptors(kind) + (kind == .copilot ? realDescriptors(kind, organization: "acme") : [])
-            where !["amp.credits", "codex.credits", "cursor.credits", "devin.extra", "ollama.purchasedCredits", "openrouter.balance"].contains(descriptor.kindScopedKey) {
+            where !["amp.credits", "codex.credits", "commandcode.balance", "cursor.credits",
+                    "devin.extra", "ollama.purchasedCredits", "openrouter.balance"].contains(descriptor.kindScopedKey) {
                 var data = descriptor.sample
                 data.limit = nil
                 data.values = [zero(.dollars), zero(.count, label: "credits"), zero(.count, label: "available"), zero(.count)]

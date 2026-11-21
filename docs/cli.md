@@ -11,7 +11,7 @@ openusage codex@1a2b3c4d   # one account, by its id
 ```
 
 - The argument is an account id (the `providers` key in the output) or a provider kind: `claude`,
-  `codex`, `cursor`, `amp`, `antigravity`, `copilot`, `devin`, `grok`, `muse`, `ollama`, `opencode`,
+  `codex`, `cursor`, `amp`, `antigravity`, `commandcode`, `copilot`, `devin`, `grok`, `muse`, `ollama`, `opencode`,
   `openrouter`, `zai`. Anything else is an error.
 - `--force` from 0.7.x is accepted and does nothing. The command says so on stderr.
 
@@ -100,6 +100,7 @@ account's right-click menu.
 | Amp | `agentUsage`, `orbHours`, `free`, `credits` |
 | Antigravity | `geminiSession`, `geminiWeekly`, `argonWeekly`, `nonGeminiSession`, `nonGeminiWeekly` |
 | Copilot | `premiumCredits`, `extraUsage`, `chat`, `completions`; an organization account: `orgCredits`, `orgSpend` |
+| Command Code | `session`, `weekly`, `monthly`, `balance`, `requests` |
 | Devin | `daily`, `weekly`, `extraUsageBalance` |
 | Grok | `weekly` |
 | Muse Code | `session`, `weekly` |

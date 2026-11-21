@@ -43,6 +43,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         AppearanceSetting.applyCurrent()
         let container = AppContainer(telemetry: PostHogTelemetrySink(), telemetryDefaults: TelemetryRecorder.suite)
         self.container = container
+        Task { await CommandCodeV1Files.importOnce(into: container.accounts) }
         container.startRefreshing()
         Task { await APIKeyV1Files.importOnce(into: container.accounts) }
         statusItemController = StatusItemController(container: container, updater: updater)

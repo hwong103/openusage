@@ -22,7 +22,7 @@ MODE="${1:-run}"
 CONFIG="${CONFIG:-release}"
 
 TARGET_NAME="OpenUsage"                 # SwiftPM target / binary name
-APP_DISPLAY="OpenUsage"                 # user-facing app name
+APP_DISPLAY="${OPENUSAGE_APP_DISPLAY:-Openusage Dev}" # user-facing app name
 BUNDLE_ID="${BUNDLE_ID:-com.robinebers.openusage.dev}"
 DEMO_BUNDLE_ID="com.robinebers.openusage.dev.demo"
 DEVELOPMENT_BUILD=false
@@ -48,9 +48,12 @@ CLI_BINARY="$APP_HELPERS/openusage"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 SIGN_ENTITLEMENTS="$ROOT_DIR/script/OpenUsage.local.entitlements.plist"
 
-# Stop only the dev builds staged here, never an installed OpenUsage with the same executable name.
-pkill -f "^$APP_BINARY" >/dev/null 2>&1 || true
-if "$DEVELOPMENT_BUILD"; then pkill -f "^$DEMO_APP_BINARY" >/dev/null 2>&1 || true; fi
+# Stop only the dev builds staged here, never the installed app. The safe updater stages with this
+# process left running and quits it only after the new bundle has been verified.
+if [[ "${OPENUSAGE_KEEP_RUNNING:-0}" != "1" ]]; then
+  pkill -f "^$APP_BINARY" >/dev/null 2>&1 || true
+  if "$DEVELOPMENT_BUILD"; then pkill -f "^$DEMO_APP_BINARY" >/dev/null 2>&1 || true; fi
+fi
 
 echo "==> swift build ($CONFIG)"
 BUILD_ARGS=(-c "$CONFIG")

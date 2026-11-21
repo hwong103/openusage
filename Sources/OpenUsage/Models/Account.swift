@@ -14,6 +14,7 @@ enum ProviderKind: String, Codable, CaseIterable, Sendable {
     case amp
     case antigravity
     case copilot
+    case commandcode
     case devin
     case grok
     case muse
@@ -30,6 +31,7 @@ enum ProviderKind: String, Codable, CaseIterable, Sendable {
         case .amp: "Amp"
         case .antigravity: "Antigravity"
         case .copilot: "Copilot"
+        case .commandcode: "Command Code"
         case .devin: "Devin"
         case .grok: "Grok"
         case .muse: "Muse Code"
@@ -52,6 +54,8 @@ enum ProviderKind: String, Codable, CaseIterable, Sendable {
         case .antigravity: []
         case .copilot: [.init(label: "Status Page", url: URL(string: "https://www.githubstatus.com/")!),
                         .init(label: "Usage Dashboard", url: URL(string: "https://github.com/settings/billing")!)]
+        case .commandcode: [.init(label: "Usage Dashboard", url: URL(string: "https://commandcode.ai/usage")!),
+                            .init(label: "Dashboard", url: URL(string: "https://commandcode.ai/studio")!)]
         case .devin: [.init(label: "Usage Dashboard", url: URL(string: "https://app.devin.ai/settings/plans")!)]
         case .grok: [.init(label: "Usage Dashboard", url: URL(string: "https://grok.com/?_s=usage")!)]
         case .muse: [.init(label: "Usage Dashboard", url: URL(string: "https://dev.meta.ai/usage")!)]
@@ -71,6 +75,7 @@ enum ProviderKind: String, Codable, CaseIterable, Sendable {
         switch self {
         case .claude, .codex, .cursor, .amp, .antigravity, .devin, .grok, .muse, .opencodeGo: [.oauth]
         case .copilot: [.oauth, .organizationToken]
+        case .commandcode: [.apiKey(keyPage: URL(string: "https://commandcode.ai/studio/api-keys")!)]
         case .ollama: [.apiKey(keyPage: URL(string: "https://ollama.com/settings/keys")!)]
         case .openrouter: [.apiKey(keyPage: URL(string: "https://openrouter.ai/settings/management-keys")!)]
         case .zai: [.apiKey(keyPage: URL(string: "https://z.ai/manage-apikey/apikey-list")!)]

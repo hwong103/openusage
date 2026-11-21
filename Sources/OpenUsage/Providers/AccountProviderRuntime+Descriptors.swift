@@ -89,6 +89,25 @@ extension AccountProviderRuntime {
                 .percent(key: "claudeWeekly", provider: provider, title: "Claude", metricLabel: AntigravityMetric.claudeWeeklyLabel)
                     .exportingLimit("nonGeminiWeekly", unit: "percent")
             ]
+        case .commandcode:
+            [
+                .percent(key: "session", provider: provider, title: "Session",
+                         metricLabel: "Session", sessionStartSignal: .zeroUsage)
+                    .exportingLimit("session", unit: "percent"),
+                .percent(key: "weekly", provider: provider, title: "Weekly", metricLabel: "Weekly")
+                    .exportingLimit("weekly", unit: "percent"),
+                .percent(key: "monthly", provider: provider, title: "Monthly", metricLabel: "Monthly")
+                    .exportingLimit("monthly", unit: "percent"),
+                .values(key: "balance", provider: provider, title: "Balance",
+                        metricLabel: "Balance", valueWord: "left")
+                    .exportingLimit("balance", kind: .balance, unit: "usd", source: .value(kind: .dollars)),
+                .values(key: "requests", provider: provider, title: "Requests",
+                        metricLabel: "Requests", valueWord: "requests")
+                    .exportingLimit("requests", unit: "requests", source: .value(kind: .count, label: "requests")),
+                .history(key: "today", provider: provider, .window(.today, .spend, then: .tokens)),
+                .history(key: "yesterday", provider: provider, .window(.yesterday, .spend, then: .tokens)),
+                .history(key: "last30", provider: provider, .window(.lastDays(30), .spend, then: .tokens))
+            ]
         case .copilot where account.organization != nil:
             [
                 .values(key: "orgCredits", provider: provider, title: "Org Credits")

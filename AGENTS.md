@@ -1,7 +1,7 @@
 # AGENTS.md
 
 OpenUsage is a SwiftPM-based macOS menu-bar app that shows the usage limits of the AI coding accounts a
-user adds within the app (Claude, Codex, Cursor, Amp, Copilot, Antigravity, Devin, Grok, Muse Code,
+user adds within the app (Claude, Codex, Cursor, Amp, Copilot, Command Code, Antigravity, Devin, Grok, Muse Code,
 Ollama, OpenCode, OpenRouter, Z.ai).
 
 This file documents the engineering conventions for the project. Read it before contributing.

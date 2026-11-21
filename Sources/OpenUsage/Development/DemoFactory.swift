@@ -189,6 +189,7 @@ enum DemoFactory {
         case .amp: ["Free", "Megawatt"]
         case .antigravity: ["AI Pro", "AI Ultra"]
         case .copilot: account.organization == nil ? ["Free", "Pro", "Pro+"] : ["Business", "Enterprise"]
+        case .commandcode: ["Go", "Pro", "GOAT", "Max", "Ultra"]
         case .devin: ["Core", "Team"]
         case .grok: ["SuperGrok", "SuperGrok Heavy"]
         case .muse: ["Free", "Pro"]

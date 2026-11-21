@@ -19,6 +19,7 @@ How each provider signs in and what its card shows.
 | Antigravity | Browser (Google OAuth) | Gemini 5h, Gemini, Argon, Claude 5h, Claude |
 | Copilot | Device code (GitHub or GHE.com) | Credits, Extra Usage, Chat, Completions |
 | Copilot organization | Organization and token | Org Credits, Org Spend |
+| Command Code | API key | Session, Weekly, Monthly, Balance, Requests, Today, Yesterday, Last 30 Days |
 | Devin | Browser (Windsurf), then a pasted token | Daily, Weekly, Extra Usage |
 | Grok | Device code (xAI) | Weekly, Extra Usage |
 | Muse Code | Device code (Meta) | Session, Weekly |
@@ -143,6 +144,21 @@ To see an organization's billing, add it as its own account. Choose Copilot, the
 Billing**, and enter the organization and a token from an owner or billing manager. The card shows
 **Org Credits** (AI credits the organization used this month) and **Org Spend** (dollars billed
 beyond the included pool).
+
+## Command Code
+
+- Paste an API key from the
+  [Command Code key page](https://commandcode.ai/studio/api-keys). OpenUsage stores it in its own
+  Keychain item and sends it only to `api.commandcode.ai`.
+- The card shows the Session and Weekly rolling limits, Monthly usage, the remaining plan,
+  purchased, and free credits, and the current billing cycle's Requests.
+- Today, Yesterday, and Last 30 Days show charged credits and tokens from Command Code's own usage
+  summary. They also contribute to the dashboard's spend views.
+- Command Code accepts only a cumulative `since` floor and snaps it to a UTC day. Its daily history
+  is therefore keyed to UTC, while its Session and Weekly meters use the reset instants Command Code
+  reports.
+- The key page is the supported sign-in. OpenUsage does not keep reading the Command Code CLI's login
+  file after an account is added.
 
 ## Devin
 
