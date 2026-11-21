@@ -7,8 +7,9 @@
 ./script/build_and_run.sh logs     # launch and stream its log lines
 ```
 
-- The dev bundle id is `com.robinebers.openusage.dev`. It keeps its own settings and Keychain items
-  and runs beside an installed OpenUsage.
+- The dev bundle id is `com.robinebers.openusage.dev`. It keeps its own settings and Keychain items.
+  The ad-hoc development build accesses those items through Apple's `/usr/bin/security` helper and
+  runs beside an installed OpenUsage.
 - It has no update feed, so the Updates controls are disabled. It leaves alone the OpenRouter and Z.ai
   keys 0.7.x saved.
 - Only one dev build runs at a time. If one from another folder is running, `run` and `verify` fail

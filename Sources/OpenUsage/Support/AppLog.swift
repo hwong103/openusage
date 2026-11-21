@@ -6,6 +6,8 @@ enum LogTag: String, Sendable {
     case cache
     case http
     case auth
+    case keychain
+    case subprocess
     case updates
     case config
     case statusItem = "statusitem"

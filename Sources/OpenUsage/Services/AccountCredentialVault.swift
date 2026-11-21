@@ -33,10 +33,20 @@ enum CredentialVaultError: LocalizedError {
 
 struct KeychainCredentialVault: CredentialVault {
     static let service = "com.robinebers.openusage.accounts"
-    private let items = KeychainItems(service: service)
+    private let items: KeychainItems
+
+    init(processRunner: any ProcessRunning = SystemProcessRunner()) {
+        items = KeychainItems(service: Self.service, processRunner: processRunner)
+    }
 
     func load(_ id: UUID) throws -> AccountCredential? {
-        try items.load(id).map { try JSONDecoder().decode(AccountCredential.self, from: $0) }
+        guard let data = try items.load(id) else { return nil }
+        do {
+            return try JSONDecoder().decode(AccountCredential.self, from: data)
+        } catch {
+            AppLog.error(.auth, "could not decode the Keychain credential for \(id.uuidString): \(error)")
+            throw error
+        }
     }
 
     func save(_ credential: AccountCredential, for id: UUID) throws {
@@ -53,67 +63,86 @@ struct KeychainCredentialVault: CredentialVault {
 }
 
 /// The generic-password items of one Keychain service, one per id.
+///
+/// Local development builds are ad-hoc signed, so their code identity changes on every rebuild and
+/// `SecItemCopyMatching` can wait on an ACL prompt left by an older build. Apple's signed
+/// `/usr/bin/security` helper carries the stable `apple-tool:` identity, reads and rewrites these
+/// items without prompting, and keeps each credential scoped to its account UUID.
 struct KeychainItems: Sendable {
+    private static let securityTool = "/usr/bin/security"
+    private static let itemNotFoundExitCode: Int32 = 44
+    private static let timeout: TimeInterval = 5
+
     let service: String
+    let processRunner: any ProcessRunning
+
+    init(service: String, processRunner: any ProcessRunning = SystemProcessRunner()) {
+        self.service = service
+        self.processRunner = processRunner
+    }
 
     func load(_ id: UUID) throws -> Data? {
-        var query = baseQuery(for: id)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = item as? Data else {
-            throw KeychainVaultError.status(status)
+        let result = try run(["find-generic-password", "-a", account(for: id), "-s", service, "-w"])
+        if result.exitCode == Self.itemNotFoundExitCode { return nil }
+        guard result.succeeded else { throw KeychainVaultError.commandFailed(result.exitCode) }
+        guard let data = result.stdout.data(using: .utf8) else {
+            throw KeychainVaultError.invalidData
         }
         return data
     }
 
     func save(_ data: Data, for id: UUID) throws {
-        let query = baseQuery(for: id)
-        let attributes = [kSecValueData as String: data]
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecItemNotFound {
-            var insert = query
-            insert[kSecValueData as String] = data
-            let addStatus = SecItemAdd(insert as CFDictionary, nil)
-            guard addStatus == errSecSuccess else { throw KeychainVaultError.status(addStatus) }
-        } else if status != errSecSuccess {
-            throw KeychainVaultError.status(status)
-        }
+        try write(data, for: id)
     }
 
     func update(_ data: Data, for id: UUID) throws {
-        let attributes = [kSecValueData as String: data]
-        let status = SecItemUpdate(baseQuery(for: id) as CFDictionary, attributes as CFDictionary)
-        if status == errSecItemNotFound { throw CredentialVaultError.missingCredential }
-        guard status == errSecSuccess else { throw KeychainVaultError.status(status) }
+        guard try load(id) != nil else { throw CredentialVaultError.missingCredential }
+        try write(data, for: id)
     }
 
     func delete(_ id: UUID) throws {
-        let status = SecItemDelete(baseQuery(for: id) as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw KeychainVaultError.status(status)
+        let result = try run(["delete-generic-password", "-a", account(for: id), "-s", service])
+        guard result.succeeded || result.exitCode == Self.itemNotFoundExitCode else {
+            throw KeychainVaultError.commandFailed(result.exitCode)
         }
     }
 
-    private func baseQuery(for id: UUID) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: id.uuidString
-        ]
+    private func write(_ data: Data, for id: UUID) throws {
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw KeychainVaultError.invalidData
+        }
+        let result = try run([
+            "add-generic-password", "-U", "-a", account(for: id), "-s", service, "-w", value,
+        ])
+        guard result.succeeded else { throw KeychainVaultError.commandFailed(result.exitCode) }
     }
+
+    private func run(_ arguments: [String]) throws -> ProcessResult {
+        try processRunner.run(
+            executable: Self.securityTool,
+            arguments: arguments,
+            environment: [:],
+            timeout: Self.timeout
+        )
+    }
+
+    private func account(for id: UUID) -> String { id.uuidString }
 }
 
 enum KeychainVaultError: LocalizedError {
     case status(OSStatus)
+    case commandFailed(Int32)
+    case invalidData
 
     var errorDescription: String? {
         switch self {
         case .status(let status):
             let reason = SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)"
             return "OpenUsage couldn't use its Keychain item for this account (\(reason))."
+        case .commandFailed(let status):
+            return "OpenUsage couldn't use its Keychain item for this account (security exit \(status))."
+        case .invalidData:
+            return "OpenUsage couldn't encode or read this account's Keychain item."
         }
     }
 }

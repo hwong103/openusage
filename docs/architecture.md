@@ -40,7 +40,8 @@ which swaps the runtimes in place and refreshes new ones. The status item and pa
 - Browser logins live in `Services/BrowserProviderLogins.swift`, device-code, Cursor, and API-key logins in
   `Services/DeviceProviderLogins.swift`, and Devin's in `Providers/Devin/DevinLogin.swift`.
 - `CredentialVault` (`Services/AccountCredentialVault.swift`) keeps one credential per account in
-  the app's Keychain service.
+  the app's Keychain service. Its account-scoped reads and writes use Apple's `/usr/bin/security`
+  helper so ad-hoc development rebuilds retain silent access across changing code identities.
 
 A CLIProxyAPI hub (`Models/CLIProxyHub.swift`) is not a provider. Each supported login on a hub is an
 ordinary account of its provider. Its `HTTPClient` is a `HubTunnel`
