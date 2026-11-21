@@ -148,16 +148,30 @@ restore_previous() {
   local reason="$1"
   echo "Update failed after install: $reason Restoring previous app." >&2
   pkill -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" >/dev/null 2>&1 || true
-  rm -rf "$INSTALL_TARGET"
+  if [[ -d "$INSTALL_TARGET" ]]; then
+    if ! rm -rf "$INSTALL_TARGET"; then
+      echo "Recovery failed: the replacement app could not be removed before restoring $LIVE_PREVIOUS." >&2
+      exit 1
+    fi
+  fi
   if [[ -d "$LIVE_PREVIOUS" ]]; then
-    ditto "$LIVE_PREVIOUS/Contents" "$INSTALL_TARGET/Contents"
+    if ! ditto "$LIVE_PREVIOUS/Contents" "$INSTALL_TARGET/Contents"; then
+      echo "Recovery failed: the previous app could not be restored from $LIVE_PREVIOUS." >&2
+      return 1
+    fi
     rm -rf "$LIVE_PREVIOUS"
-    ln -sfn "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"
+    if ! ln -sfn "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"; then
+      echo "Recovery failed: the restored app's CLI link could not be recreated." >&2
+      return 1
+    fi
     if ! install_launch_agent; then
       echo "Restored app is installed, but its login launch item could not be reloaded." >&2
     fi
     verify_commandcode_fresh "$CLI_LINK" "the restored app" \
       || echo "Restored app is installed, but its Command Code data could not be revalidated." >&2
+  else
+    echo "Recovery failed: no previous app copy exists at $LIVE_PREVIOUS." >&2
+    return 1
   fi
   exit 1
 }
@@ -174,6 +188,8 @@ validate_cli_target() {
   existing_link="$(readlink "$CLI_LINK")"
   case "$existing_link" in
     "$INSTALL_TARGET/Contents/Helpers/openusage"|\
+    "$HOME/Applications/.Openusage Dev.previous/Contents/Helpers/openusage"|\
+    "$HOME/Library/Application Support/Openusage Dev/backup/Openusage Dev.previous/Contents/Helpers/openusage"|\
     "$HOME/Applications/.Openusage Dev.app.previous/Contents/Helpers/openusage"|\
     "$HOME/Library/Application Support/Openusage Dev/backup/Openusage Dev.app.previous/Contents/Helpers/openusage")
       return 0
@@ -334,13 +350,27 @@ cd "$ROOT_DIR"
     echo "Update failed: current app did not quit; installed app was not changed." >&2
     exit 1
   fi
+  if [[ ! -d "$INSTALL_TARGET" ]]; then
+    echo "Update failed: current app disappeared after it quit; installed app was not changed." >&2
+    exit 1
+  fi
 
   rm -rf "$LIVE_PREVIOUS"
-  if [[ -d "$INSTALL_TARGET" ]]; then
-    ditto "$INSTALL_TARGET/Contents" "$LIVE_PREVIOUS/Contents"
-    rm -rf "$INSTALL_TARGET"
+  if ! ditto "$INSTALL_TARGET/Contents" "$LIVE_PREVIOUS/Contents"; then
+    echo "Update failed: the current app could not be copied to the rollback directory." >&2
+    ln -sfn "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK" || true
+    install_launch_agent || true
+    exit 1
   fi
-  mv "$TMP_TARGET" "$INSTALL_TARGET"
+  if ! rm -rf "$INSTALL_TARGET"; then
+    echo "Update failed: the current app could not be removed." >&2
+    ln -sfn "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK" || true
+    install_launch_agent || true
+    exit 1
+  fi
+  if ! mv "$TMP_TARGET" "$INSTALL_TARGET"; then
+    restore_previous "the staged app could not be moved into place."
+  fi
 
   mkdir -p "$(dirname "$CLI_LINK")"
   if ! rm -f "$CLI_LINK" \
@@ -365,7 +395,9 @@ cd "$ROOT_DIR"
   if [[ "$(pgrep -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" | wc -l | tr -d ' ')" != "1" ]]; then
     restore_previous "expected exactly one Openusage Dev instance."
   fi
-  codesign --verify --deep --strict "$INSTALL_TARGET"
+  if ! codesign --verify --deep --strict "$INSTALL_TARGET"; then
+    restore_previous "the installed app failed signature verification."
+  fi
   if [[ "$(readlink "$CLI_LINK")" != "$INSTALL_TARGET/Contents/Helpers/openusage" ]]; then
     restore_previous "the CLI link does not point at the installed app."
   fi

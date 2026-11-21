@@ -21,7 +21,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 // The owner observes this distributed notification and presents its panel.
                 DistributedNotificationCenter.default().postNotificationName(
                     .openUsageShowPopover,
-                    object: nil,
+                    object: bundleID,
                     userInfo: nil,
                     options: [.deliverImmediately]
                 )

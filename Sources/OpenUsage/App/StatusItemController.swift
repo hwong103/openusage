@@ -345,10 +345,13 @@ final class StatusItemController: NSObject {
 final class StatusItemReopenRelay {
     private let observer: NSObjectProtocol
 
-    init(onShowPopover: @escaping @MainActor () -> Void) {
+    init(
+        bundleID: String = Bundle.main.bundleIdentifier ?? "unknown",
+        onShowPopover: @escaping @MainActor () -> Void
+    ) {
         observer = DistributedNotificationCenter.default().addObserver(
             forName: .openUsageShowPopover,
-            object: nil,
+            object: bundleID,
             queue: .main
         ) { _ in
             Task { @MainActor in onShowPopover() }
