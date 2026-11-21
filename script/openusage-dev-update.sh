@@ -96,7 +96,7 @@ cd "$ROOT_DIR"
   /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$STAGED_APP/Contents/Info.plist" | grep -Fx 'Openusage Dev' >/dev/null
   STAGED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$STAGED_APP/Contents/Info.plist")"
   [[ "$STAGED_VERSION" == "dev (${BUILD_REVISION:0:7})" ]]
-  "$STAGED_APP/Contents/Helpers/openusage" codex >/dev/null
+  "$STAGED_APP/Contents/Helpers/openusage" --version >/dev/null
 
   BACKUP="$HOME/Library/Application Support/Openusage Dev/backup"
   mkdir -p "$BACKUP"
