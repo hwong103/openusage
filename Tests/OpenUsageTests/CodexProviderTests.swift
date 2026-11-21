@@ -629,8 +629,11 @@ final class CodexProviderTests: XCTestCase {
 
         let snapshot = await provider.refresh()
 
+        let fixtureDay = DailyUsageAccumulator.dayKey(
+            from: OpenUsageISO8601.date(from: "2099-02-20T14:00:00.000Z")!
+        )
         let fixtureModels = try XCTUnwrap(
-            snapshot.usageHistory?.modelUsage?.daily.first { $0.date == "2099-02-20" }?.models
+            snapshot.usageHistory?.modelUsage?.daily.first { $0.date == fixtureDay }?.models
         )
         let openCodeModel = try XCTUnwrap(fixtureModels.first { $0.model == "gpt-test" })
         XCTAssertEqual(openCodeModel.totalTokens, 150)

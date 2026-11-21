@@ -21,7 +21,7 @@ MODE="${1:-run}"
 CONFIG="${CONFIG:-release}"
 
 TARGET_NAME="OpenUsage"                 # SwiftPM target / binary name
-APP_DISPLAY="OpenUsage"                 # user-facing app name
+APP_DISPLAY="${OPENUSAGE_APP_DISPLAY:-Openusage Dev}" # user-facing app name
 BUNDLE_ID="${BUNDLE_ID:-com.robinebers.openusage.dev}"
 ICLOUD_CONTAINER_ID="iCloud.com.robinebers.openusage.dev"
 MIN_SYSTEM_VERSION="15.0"
@@ -52,7 +52,9 @@ RESOURCE_BUNDLE_NAME="${TARGET_NAME}_${TARGET_NAME}.bundle"
 ENTITLEMENTS="$ROOT_DIR/script/OpenUsage.dev.entitlements.plist"
 SIGN_ENTITLEMENTS="$ROOT_DIR/script/OpenUsage.local.entitlements.plist"
 
-pkill -x "$TARGET_NAME" >/dev/null 2>&1 || true
+if [[ "${OPENUSAGE_KEEP_RUNNING:-0}" != "1" ]]; then
+  pkill -x "$TARGET_NAME" >/dev/null 2>&1 || true
+fi
 
 echo "==> swift build ($CONFIG)"
 swift build -c "$CONFIG"
