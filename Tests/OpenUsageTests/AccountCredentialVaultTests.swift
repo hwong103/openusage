@@ -34,7 +34,10 @@ final class AccountCredentialVaultTests: XCTestCase {
     }
 
     func testSaveRewritesOnlyTheSameAccount() throws {
-        let runner = ScriptedSecurityRunner([.init(exitCode: 0, stdout: "", stderr: "")])
+        let runner = ScriptedSecurityRunner([
+            .init(exitCode: 44, stdout: "", stderr: ""),
+            .init(exitCode: 0, stdout: "", stderr: ""),
+        ])
         let items = KeychainItems(service: service, processRunner: runner)
         let encoded = Data("synthetic-credential".utf8)
 
@@ -43,11 +46,31 @@ final class AccountCredentialVaultTests: XCTestCase {
         XCTAssertEqual(runner.invocations, [
             .init(
                 executable: "/usr/bin/security",
+                arguments: ["find-generic-password", "-a", accountID.uuidString, "-s", service]
+            ),
+            .init(
+                executable: "/usr/bin/security",
                 arguments: [
                     "add-generic-password", "-U", "-a", accountID.uuidString, "-s", service, "-w",
                     "synthetic-credential",
                 ]
             ),
+        ])
+    }
+
+    func testReplacementProbeDeletesAnUnreadableExistingItemBeforeAdding() throws {
+        let runner = ScriptedSecurityRunner([
+            .init(exitCode: 0, stdout: "attributes only", stderr: ""),
+            .init(exitCode: 0, stdout: "", stderr: "item deleted"),
+            .init(exitCode: 0, stdout: "", stderr: ""),
+        ])
+        let items = KeychainItems(service: service, processRunner: runner)
+        let encoded = Data("replacement-credential".utf8)
+
+        try items.save(encoded, for: accountID)
+
+        XCTAssertEqual(runner.invocations.map(\.arguments.first), [
+            "find-generic-password", "delete-generic-password", "add-generic-password",
         ])
     }
 

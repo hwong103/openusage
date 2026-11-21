@@ -92,17 +92,40 @@ struct KeychainItems: Sendable {
     }
 
     func save(_ data: Data, for id: UUID) throws {
+        if try probe(id) == .present {
+            try delete(id)
+        }
         try write(data, for: id)
     }
 
     func update(_ data: Data, for id: UUID) throws {
-        guard try load(id) != nil else { throw CredentialVaultError.missingCredential }
+        guard try probe(id) == .present else { throw CredentialVaultError.missingCredential }
+        try delete(id)
         try write(data, for: id)
     }
 
     func delete(_ id: UUID) throws {
         let result = try run(["delete-generic-password", "-a", account(for: id), "-s", service])
         guard result.succeeded || result.exitCode == Self.itemNotFoundExitCode else {
+            throw KeychainVaultError.commandFailed(result.exitCode)
+        }
+    }
+
+    private enum ItemState {
+        case absent
+        case present
+    }
+
+    /// An ACL-protected legacy item can be found but never read or updated. Writes replace the item
+    /// through Apple's security tool once the caller has the complete replacement credential.
+    private func probe(_ id: UUID) throws -> ItemState {
+        let result = try run(["find-generic-password", "-a", account(for: id), "-s", service])
+        switch result.exitCode {
+        case 0:
+            return .present
+        case Self.itemNotFoundExitCode:
+            return .absent
+        default:
             throw KeychainVaultError.commandFailed(result.exitCode)
         }
     }

@@ -20,9 +20,138 @@ SYNC_UPSTREAM="${OPENUSAGE_SYNC_UPSTREAM:-0}"
 UPSTREAM_REF="${OPENUSAGE_UPSTREAM_REF:-upstream/main}"
 BASE_BRANCH="${OPENUSAGE_BASE_BRANCH:-main}"
 BUILD_REVISION=""
+SOURCE_RELEASE=""
+STAGED_VERSION=""
 LOG_DIR="$HOME/Library/Logs"
 LOG_FILE="$LOG_DIR/openusage-dev-update.log"
 LOCK_DIR="$HOME/Library/Caches/openusage-dev-update.lock"
+
+verify_commandcode_fresh() {
+  local cli="$1"
+  local label="$2"
+  local output=""
+  local now=""
+  local item=""
+  local configured=""
+  local elapsed=0
+  local timeout_seconds="${OPENUSAGE_VERIFY_TIMEOUT_SECONDS:-180}"
+
+  configured="$(/usr/bin/defaults export com.robinebers.openusage.dev - 2>/dev/null | /usr/bin/python3 -c '
+import json
+import plistlib
+import sys
+
+try:
+    values = plistlib.load(sys.stdin.buffer)
+    accounts = json.loads(values["accounts.v1"])
+except Exception:
+    accounts = []
+print("yes" if any(account.get("kind") == "commandcode" for account in accounts) else "no")
+' 2>/dev/null || printf 'no')"
+  if [[ "$configured" != "yes" ]]; then
+    echo "No Command Code account is configured for $label; data-freshness check skipped."
+    return 0
+  fi
+
+  while (( elapsed < timeout_seconds )); do
+    output="$("$cli" commandcode 2>/dev/null || true)"
+    now="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    item="$(printf '%s' "$output" | /usr/bin/python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+providers = payload.get("providers", {})
+for key, value in providers.items():
+    if key.startswith("commandcode@"):
+        print("|".join([
+            str(value.get("fetchedAt", "")),
+            str(value.get("expiresAt", "")),
+            str(value.get("stale", "")).lower(),
+            ",".join(sorted((value.get("resources") or {}).keys())),
+        ]))
+        break
+' 2>/dev/null || true)"
+    if [[ -z "$item" ]]; then
+      sleep 1
+      elapsed=$((elapsed + 1))
+      continue
+    fi
+    if /usr/bin/python3 -c '
+import datetime
+import sys
+
+fetched_at, expires_at, stale, resources = sys.argv[1].split("|", 3)
+now_text = sys.argv[2]
+if stale != "false":
+    raise SystemExit(1)
+fetched = datetime.datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+now = datetime.datetime.fromisoformat(now_text.replace("Z", "+00:00"))
+if now - fetched > datetime.timedelta(minutes=5):
+    raise SystemExit(1)
+required = {"balance", "monthly", "requests", "session", "weekly"}
+if set(resources.split(",")) & required != required:
+    raise SystemExit(1)
+' "$item" "$now"; then
+      echo "Fresh Command Code data verified for $label: $item at $now."
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  return 1
+}
+
+install_launch_agent() {
+  if [[ ! -f "$LAUNCH_PLIST" ]]; then
+    mkdir -p "$(dirname "$LAUNCH_PLIST")"
+    cat > "$LAUNCH_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$LAUNCH_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/open</string>
+    <string>-gj</string>
+    <string>$INSTALL_TARGET</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$HOME/Library/Logs/openusage-dev.launch.out</string>
+  <key>StandardErrorPath</key>
+  <string>$HOME/Library/Logs/openusage-dev.launch.err</string>
+</dict>
+</plist>
+PLIST
+    plutil -lint "$LAUNCH_PLIST" >/dev/null
+  fi
+  launchctl bootout "gui/$(id -u)/$LAUNCH_LABEL" >/dev/null 2>&1 || true
+  if [[ -f "$LAUNCH_PLIST" ]]; then
+    launchctl bootstrap "gui/$(id -u)" "$LAUNCH_PLIST" 2>/dev/null \
+      || launchctl kickstart "gui/$(id -u)/$LAUNCH_LABEL"
+  else
+    open -gj "$INSTALL_TARGET"
+  fi
+}
+
+restore_previous() {
+  local reason="$1"
+  echo "Update failed after install: $reason Restoring previous app." >&2
+  pkill -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" >/dev/null 2>&1 || true
+  rm -rf "$INSTALL_TARGET"
+  if [[ -d "$LIVE_PREVIOUS" ]]; then
+    mv "$LIVE_PREVIOUS" "$INSTALL_TARGET"
+    ln -sfn "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"
+    install_launch_agent
+    verify_commandcode_fresh "$CLI_LINK" "the restored app" \
+      || echo "Restored app is installed, but its Command Code data could not be revalidated." >&2
+  fi
+  exit 1
+}
 
 mkdir -p "$LOG_DIR"
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -111,6 +240,10 @@ cd "$ROOT_DIR"
   rm -rf "$TMP_TARGET"
   ditto "$STAGED_APP" "$TMP_TARGET"
   codesign --verify --deep --strict "$TMP_TARGET"
+  /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$TMP_TARGET/Contents/Info.plist" | grep -Fx 'Openusage Dev' >/dev/null
+  /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$TMP_TARGET/Contents/Info.plist" | grep -Fx 'com.robinebers.openusage.dev' >/dev/null
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$TMP_TARGET/Contents/Info.plist")" == "$STAGED_VERSION" ]]
+  "$TMP_TARGET/Contents/Helpers/openusage" --version >/dev/null
   PLIST_LABEL="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$LAUNCH_PLIST" 2>/dev/null || true)"
   if [[ -f "$LAUNCH_PLIST" && "$PLIST_LABEL" != "$LAUNCH_LABEL" ]]; then
     echo "Update failed: launch item $LAUNCH_PLIST has the wrong Label." >&2
@@ -149,48 +282,28 @@ cd "$ROOT_DIR"
     rm -f "$CLI_LINK"
   fi
   ln -s "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"
-  launchctl bootout "gui/$(id -u)/$LAUNCH_LABEL" >/dev/null 2>&1 || true
-  if [[ -f "$LAUNCH_PLIST" ]]; then
-    launchctl bootstrap "gui/$(id -u)" "$LAUNCH_PLIST" 2>/dev/null || launchctl kickstart "gui/$(id -u)/$LAUNCH_LABEL"
-  else
-    open -gj "$INSTALL_TARGET"
-  fi
+  install_launch_agent
 
   for _ in {1..30}; do
     pgrep -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" >/dev/null && break
     sleep 0.2
   done
   if ! pgrep -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" >/dev/null; then
-    echo "Update failed after install: app did not relaunch. Restoring previous app." >&2
-    rm -rf "$INSTALL_TARGET"
-    if [[ -d "$LIVE_PREVIOUS" ]]; then
-      mv "$LIVE_PREVIOUS" "$INSTALL_TARGET"
-      ln -sfn "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"
-      /usr/bin/open -gj "$INSTALL_TARGET"
-    fi
-    exit 1
+    restore_previous "the app did not relaunch."
   fi
 
   if [[ "$(git rev-parse HEAD)" != "$BUILD_REVISION" ]]; then
-    echo "Update failed after install: checkout changed while building. Restoring previous app." >&2
-    rm -rf "$INSTALL_TARGET"
-    if [[ -d "$LIVE_PREVIOUS" ]]; then mv "$LIVE_PREVIOUS" "$INSTALL_TARGET"; fi
-    ln -sfn "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"
-    /usr/bin/open -gj "$INSTALL_TARGET"
-    exit 1
+    restore_previous "the checkout changed while building."
   fi
   if [[ "$(pgrep -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" | wc -l | tr -d ' ')" != "1" ]]; then
-    echo "Update failed after install: expected exactly one Openusage Dev instance. Restoring previous app." >&2
-    pkill -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" >/dev/null 2>&1 || true
-    rm -rf "$INSTALL_TARGET"
-    if [[ -d "$LIVE_PREVIOUS" ]]; then mv "$LIVE_PREVIOUS" "$INSTALL_TARGET"; fi
-    ln -sfn "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"
-    /usr/bin/open -gj "$INSTALL_TARGET"
-    exit 1
+    restore_previous "expected exactly one Openusage Dev instance."
   fi
   codesign --verify --deep --strict "$INSTALL_TARGET"
   [[ "$(readlink "$CLI_LINK")" == "$INSTALL_TARGET/Contents/Helpers/openusage" ]]
   "$CLI_LINK" --version >/dev/null
+  if ! verify_commandcode_fresh "$CLI_LINK" "the installed app"; then
+    restore_previous "Command Code did not refresh to fresh, complete data."
+  fi
 
   echo "Installed $("$CLI_LINK" --version 2>&1 | head -n 1) from commit $BUILD_REVISION, source release $SOURCE_RELEASE."
 } 2>&1 | tee -a "$LOG_FILE"
