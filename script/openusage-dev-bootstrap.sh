@@ -13,7 +13,7 @@ if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
   exit 2
 fi
 
-REPOSITORY="${OPENUSAGE_REPOSITORY:-git@github.com:hwong103/openusage.git}"
+REPOSITORY="${OPENUSAGE_REPOSITORY:-https://github.com/hwong103/openusage.git}"
 BRANCH="${OPENUSAGE_BRANCH:-main}"
 CHECKOUT="${OPENUSAGE_CHECKOUT:-$HOME/Library/Application Support/Openusage Dev/source}"
 CLI_LINK="${OPENUSAGE_CLI_LINK:-}"
