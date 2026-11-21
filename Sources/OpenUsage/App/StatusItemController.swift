@@ -98,6 +98,7 @@ final class StatusItemController: NSObject {
     private var rankingTick: Task<Void, Never>?
     private let panel: MenuBarPanel
     private let heightController: PanelHeightController
+    private var reopenRelay: StatusItemReopenRelay?
     private lazy var outsideClickMonitor = PanelOutsideClickMonitor(
         panel: panel,
         statusItem: statusItem,
@@ -150,6 +151,8 @@ final class StatusItemController: NSObject {
             AppLog.info(.statusItem, "Global shortcut fired; toggling popover")
             self?.togglePopover()
         }
+
+        reopenRelay = StatusItemReopenRelay { [weak self] in self?.showPopover() }
 
         panel.onDismiss = { [weak self] in
             self?.hidePanel()
@@ -289,6 +292,18 @@ final class StatusItemController: NSObject {
         }
     }
 
+    /// Opens the dashboard when another launch or Finder asks the running app to become visible.
+    /// Unlike toggling, this never closes a panel that is already open.
+    func showPopover() {
+        if panel.isVisible {
+            panel.makeKeyAndOrderFront(nil)
+            buttonHighlight(true)
+            outsideClickMonitor.start()
+        } else {
+            showPanel()
+        }
+    }
+
     private func showPanel(dashboardTab: DashboardTab = .preferred()) {
         guard let button = statusItem.button, let buttonWindow = button.window else {
             AppLog.error(.statusItem, "Cannot show panel: status item has no button")
@@ -302,7 +317,7 @@ final class StatusItemController: NSObject {
 
         panel.makeKeyAndOrderFront(nil)
         panel.clearStrayFocus()
-        button.highlight(true)
+        buttonHighlight(true)
         outsideClickMonitor.start()
     }
 
@@ -315,8 +330,32 @@ final class StatusItemController: NSObject {
         container.popover.popoverShown = false
         panel.orderOut(nil)
         outsideClickMonitor.stop()
-        statusItem.button?.highlight(false)
+        buttonHighlight(false)
         heightController.finishClosing()
     }
 
+    private func buttonHighlight(_ highlighted: Bool) {
+        statusItem.button?.highlight(highlighted)
+    }
+}
+
+/// Bridges a second process launch to the running menu-bar instance. The status item has no ordinary
+/// window for `activate()` to reveal, so it listens for this explicit request instead.
+@MainActor
+final class StatusItemReopenRelay {
+    private let observer: NSObjectProtocol
+
+    init(onShowPopover: @escaping @MainActor () -> Void) {
+        observer = DistributedNotificationCenter.default().addObserver(
+            forName: .openUsageShowPopover,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in onShowPopover() }
+        }
+    }
+}
+
+extension Notification.Name {
+    static let openUsageShowPopover = Notification.Name("com.robinebers.openusage.showPopover")
 }

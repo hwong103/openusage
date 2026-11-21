@@ -12,7 +12,8 @@ while [[ -L "$SCRIPT_PATH" ]]; do
 done
 ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 INSTALL_TARGET="${OPENUSAGE_INSTALL_TARGET:-$HOME/Applications/Openusage Dev.app}"
-STAGED_APP="${OPENUSAGE_STAGED_APP:-$ROOT_DIR/dist/Openusage Dev.app}"
+STAGING_ROOT=""
+STAGED_APP=""
 LAUNCH_LABEL="com.hwong103.openusage-dev"
 LAUNCH_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_LABEL.plist"
 CLI_LINK="${OPENUSAGE_CLI_LINK:-/opt/homebrew/bin/openusage}"
@@ -151,11 +152,52 @@ restore_previous() {
   if [[ -d "$LIVE_PREVIOUS" ]]; then
     mv "$LIVE_PREVIOUS" "$INSTALL_TARGET"
     ln -sfn "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"
-    install_launch_agent
+    if ! install_launch_agent; then
+      echo "Restored app is installed, but its login launch item could not be reloaded." >&2
+    fi
     verify_commandcode_fresh "$CLI_LINK" "the restored app" \
       || echo "Restored app is installed, but its Command Code data could not be revalidated." >&2
   fi
   exit 1
+}
+
+validate_cli_target() {
+  if [[ ! -L "$CLI_LINK" && ! -e "$CLI_LINK" ]]; then
+    return 0
+  fi
+  if [[ ! -L "$CLI_LINK" ]]; then
+    echo "Update refused: $CLI_LINK is an unrelated file." >&2
+    return 1
+  fi
+  local existing_link
+  existing_link="$(readlink "$CLI_LINK")"
+  case "$existing_link" in
+    "$INSTALL_TARGET/Contents/Helpers/openusage"|\
+    "$HOME/Applications/.Openusage Dev.app.previous/Contents/Helpers/openusage"|\
+    "$HOME/Library/Application Support/Openusage Dev/backup/Openusage Dev.app.previous/Contents/Helpers/openusage")
+      return 0
+      ;;
+    *)
+      echo "Update refused: $CLI_LINK points to an unrelated file." >&2
+      return 1
+      ;;
+  esac
+}
+
+stop_current_app() {
+  local pids
+  pids="$(pgrep -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" || true)"
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+  # Terminate only the exact installed binary. Bundle-ID AppleScript can select a duplicate app
+  # copy during diagnosis or staging and prompt for Automation access.
+  kill -TERM $pids 2>/dev/null || true
+  for _ in {1..30}; do
+    pgrep -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" >/dev/null || return 0
+    sleep 0.2
+  done
+  return 1
 }
 
 mkdir -p "$LOG_DIR"
@@ -163,8 +205,16 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
   echo "Another Openusage Dev update is running." >&2
   exit 1
 fi
-cleanup() { rmdir "$LOCK_DIR" 2>/dev/null || true; }
+STAGING_ROOT=""
+cleanup() {
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+  if [[ -n "$STAGING_ROOT" && -d "$STAGING_ROOT" ]]; then
+    rm -rf "$STAGING_ROOT"
+  fi
+}
 trap cleanup EXIT
+STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/openusage-dev-build.XXXXXX")"
+STAGED_APP="$STAGING_ROOT/dist/Openusage Dev.app"
 
 cd "$ROOT_DIR"
 {
@@ -226,7 +276,9 @@ cd "$ROOT_DIR"
   ./script/test_quiet.sh
 
   echo "Building staged app."
-  OPENUSAGE_KEEP_RUNNING=1 ./script/build_and_run.sh build
+  OPENUSAGE_KEEP_RUNNING=1 \
+  OPENUSAGE_DIST_DIR="$STAGING_ROOT/dist" \
+    ./script/build_and_run.sh build
 
   if [[ ! -d "$STAGED_APP" ]]; then
     echo "Update failed: staged app is missing." >&2
@@ -236,7 +288,11 @@ cd "$ROOT_DIR"
   /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$STAGED_APP/Contents/Info.plist" | grep -Fx 'com.robinebers.openusage.dev' >/dev/null
   /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$STAGED_APP/Contents/Info.plist" | grep -Fx 'Openusage Dev' >/dev/null
   STAGED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$STAGED_APP/Contents/Info.plist")"
-  [[ "$STAGED_VERSION" == "dev (${BUILD_REVISION:0:7})" ]]
+  STAGED_REVISION="$(git rev-parse --short "$BUILD_REVISION")"
+  if [[ "$STAGED_VERSION" != "dev ($STAGED_REVISION)" ]]; then
+    echo "Update failed: staged version '$STAGED_VERSION' does not match commit $BUILD_REVISION." >&2
+    exit 1
+  fi
   "$STAGED_APP/Contents/Helpers/openusage" --version >/dev/null
 
   BACKUP="$HOME/Library/Application Support/Openusage Dev/backup"
@@ -254,21 +310,26 @@ cd "$ROOT_DIR"
   codesign --verify --deep --strict "$TMP_TARGET"
   /usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$TMP_TARGET/Contents/Info.plist" | grep -Fx 'Openusage Dev' >/dev/null
   /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$TMP_TARGET/Contents/Info.plist" | grep -Fx 'com.robinebers.openusage.dev' >/dev/null
-  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$TMP_TARGET/Contents/Info.plist")" == "$STAGED_VERSION" ]]
+  TMP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$TMP_TARGET/Contents/Info.plist")"
+  if [[ "$TMP_VERSION" != "$STAGED_VERSION" ]]; then
+    echo "Update failed: staged copy version '$TMP_VERSION' does not match '$STAGED_VERSION'." >&2
+    exit 1
+  fi
   "$TMP_TARGET/Contents/Helpers/openusage" --version >/dev/null
+  LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+  "$LSREGISTER" -u "$STAGED_APP" >/dev/null 2>&1 || true
   PLIST_LABEL="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$LAUNCH_PLIST" 2>/dev/null || true)"
   if [[ -f "$LAUNCH_PLIST" && "$PLIST_LABEL" != "$LAUNCH_LABEL" ]]; then
     echo "Update failed: launch item $LAUNCH_PLIST has the wrong Label." >&2
     exit 1
   fi
 
+  # Check this before quitting or moving the live app. The link will still point at the current
+  # installation until the replacement has passed every staging check below.
+  validate_cli_target
+
   echo "Quitting current Openusage Dev instance."
-  osascript -e 'tell application id "com.robinebers.openusage.dev" to quit' >/dev/null 2>&1 || true
-  for _ in {1..30}; do
-    pgrep -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" >/dev/null || break
-    sleep 0.2
-  done
-  if pgrep -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" >/dev/null; then
+  if ! stop_current_app; then
     echo "Update failed: current app did not quit; installed app was not changed." >&2
     exit 1
   fi
@@ -280,21 +341,13 @@ cd "$ROOT_DIR"
   mv "$TMP_TARGET" "$INSTALL_TARGET"
 
   mkdir -p "$(dirname "$CLI_LINK")"
-  if [[ -L "$CLI_LINK" ]] || [[ -e "$CLI_LINK" ]]; then
-    if [[ -L "$CLI_LINK" ]]; then
-      existing_link="$(readlink "$CLI_LINK")"
-      case "$existing_link" in
-        "$INSTALL_TARGET/Contents/Helpers/openusage"|"$LIVE_PREVIOUS/Contents/Helpers/openusage"|"$PREVIOUS/Contents/Helpers/openusage") ;;
-        *) echo "Update refused: $CLI_LINK points to an unrelated file." >&2; exit 1 ;;
-      esac
-    else
-      echo "Update refused: $CLI_LINK is an unrelated file." >&2
-      exit 1
-    fi
-    rm -f "$CLI_LINK"
+  if ! rm -f "$CLI_LINK" \
+    || ! ln -s "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"; then
+    restore_previous "the CLI link could not be created."
   fi
-  ln -s "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"
-  install_launch_agent
+  if ! install_launch_agent; then
+    restore_previous "the launch item could not be installed."
+  fi
 
   for _ in {1..30}; do
     pgrep -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" >/dev/null && break
@@ -311,8 +364,12 @@ cd "$ROOT_DIR"
     restore_previous "expected exactly one Openusage Dev instance."
   fi
   codesign --verify --deep --strict "$INSTALL_TARGET"
-  [[ "$(readlink "$CLI_LINK")" == "$INSTALL_TARGET/Contents/Helpers/openusage" ]]
-  "$CLI_LINK" --version >/dev/null
+  if [[ "$(readlink "$CLI_LINK")" != "$INSTALL_TARGET/Contents/Helpers/openusage" ]]; then
+    restore_previous "the CLI link does not point at the installed app."
+  fi
+  if ! "$CLI_LINK" --version >/dev/null; then
+    restore_previous "the installed CLI did not run."
+  fi
   if ! verify_commandcode_fresh "$CLI_LINK" "the installed app"; then
     restore_previous "Command Code did not refresh to fresh, complete data."
   fi

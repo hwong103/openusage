@@ -16,9 +16,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             case .acquired(let token):
                 singleInstanceLock = token
             case .alreadyRunning:
-                // Hand focus to the copy that owns the lock. Best-effort: LaunchServices can briefly keep
-                // a just-terminated copy in its snapshot, so skip corpses, and the peer may not be
-                // visible yet — the lock, not this handoff, decides who survives.
+                // Hand the request to the copy that owns the lock. A menu-bar accessory has no normal
+                // window to activate, so an activation alone leaves it running with nothing visible.
+                // The owner observes this distributed notification and presents its panel.
+                DistributedNotificationCenter.default().postNotificationName(
+                    .openUsageShowPopover,
+                    object: nil,
+                    userInfo: nil,
+                    options: [.deliverImmediately]
+                )
                 let myPID = NSRunningApplication.current.processIdentifier
                 NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
                     .first { $0.processIdentifier != myPID && !$0.isTerminated && kill($0.processIdentifier, 0) == 0 }?
@@ -59,5 +65,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationWillTerminate(_ notification: Notification) {
         container?.telemetry.flush()
+    }
+
+    public func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows: Bool
+    ) -> Bool {
+        statusItemController?.showPopover()
+        return true
     }
 }

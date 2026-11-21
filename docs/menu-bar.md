@@ -5,6 +5,8 @@ Priority lists.
 
 - Left-click the icon to open the panel. Right-click (or control-click) it for **Settings** and
   **Quit OpenUsage**.
+- Launching Openusage Dev again, or reopening it from Finder, opens the panel in the running
+  menu-bar instance and closes only the duplicate launch.
 - The strip shows the limits [running out](dashboard.md#priority), most urgent first, pinned or not,
   up to **Settings → Display → Menu Bar Icons → Max Items In Menu Bar** (3 by default).
 - With **Always Show In Menu Bar** on (off by default), it lists everything Priority does, in its
