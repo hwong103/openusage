@@ -39,19 +39,15 @@ struct CommandCodeSpendHistoryStore: Sendable {
             .appendingPathComponent("OpenUsage", isDirectory: true)
     }
 
-    private var fileURL: URL {
-        directory.appendingPathComponent("commandcode-spend-history.json")
-    }
-
     // MARK: - Reads
 
     /// Stored days inside the shared history window (today plus the previous 30 UTC days). The source's
     /// calendar is UTC because Command Code snaps cumulative `since` floors to UTC days.
-    func history(through now: Date) -> UsageHistory {
+    func history(for accountID: String, through now: Date) -> UsageHistory {
         let calendar = CommandCodeSpendWindow.utcCalendar
         let window = Self.windowKeys(through: now)
         var days: [Date: UsageDay] = [:]
-        for (key, value) in load().days where window.contains(key) {
+        for (key, value) in load(accountID: accountID).days where window.contains(key) {
             guard let date = calendar.date(from: Self.components(from: key)) else { continue }
             days[calendar.startOfDay(for: date)] = UsageDay(totals: UsageTotals(values: [
                 .spend: max(0, value.costUSD),
@@ -63,8 +59,8 @@ struct CommandCodeSpendHistoryStore: Sendable {
 
     /// True until a backfill has completed for today's UTC day. A corrupt or missing file reads as `true`,
     /// so the provider rebuilds the window once and then leaves it alone until the next day boundary.
-    func needsBackfill(now: Date) -> Bool {
-        load().lastBackfillDay != Self.utcDayKey(for: now)
+    func needsBackfill(for accountID: String, now: Date) -> Bool {
+        load(accountID: accountID).lastBackfillDay != Self.utcDayKey(for: now)
     }
 
     // MARK: - Writes
@@ -74,8 +70,13 @@ struct CommandCodeSpendHistoryStore: Sendable {
     /// value and is final once the day has passed, though rewriting it with the same reading is harmless.
     /// A `nil` window (a failed call) leaves that day untouched so a transient error can't erase a stored
     /// value.
-    func record(todayTotal: CommandCodeSpendTotal?, yesterdayTotal: CommandCodeSpendTotal?, now: Date) {
-        var payload = load()
+    func record(
+        for accountID: String,
+        todayTotal: CommandCodeSpendTotal?,
+        yesterdayTotal: CommandCodeSpendTotal?,
+        now: Date
+    ) {
+        var payload = load(accountID: accountID)
         if let todayTotal { payload.days[Self.utcDayKey(for: now)] = Self.day(from: todayTotal) }
         if let yesterdayTotal {
             let yesterday = CommandCodeSpendWindow.utcCalendar
@@ -83,18 +84,18 @@ struct CommandCodeSpendHistoryStore: Sendable {
             payload.days[Self.utcDayKey(for: yesterday)] = Self.day(from: yesterdayTotal)
         }
         payload.days = Self.pruned(payload.days, relativeTo: Self.utcDayKey(for: now))
-        save(payload)
+        save(payload, accountID: accountID)
     }
 
     /// Merge a completed backfill's per-day values and stamp the day it ran. Days already recorded by
     /// `record` are overwritten with the backfill's reading; both derive from the same cumulative floors,
     /// so the two agree for any day the API answered.
-    func merge(dayTotals: [String: CommandCodeSpendTotal], backfillDay: String) {
-        var payload = load()
+    func merge(dayTotals: [String: CommandCodeSpendTotal], backfillDay: String, for accountID: String) {
+        var payload = load(accountID: accountID)
         for (day, total) in dayTotals { payload.days[day] = Self.day(from: total) }
         payload.lastBackfillDay = backfillDay
         payload.days = Self.pruned(payload.days, relativeTo: backfillDay)
-        save(payload)
+        save(payload, accountID: accountID)
     }
 
     // MARK: - Day math
@@ -127,6 +128,29 @@ struct CommandCodeSpendHistoryStore: Sendable {
     static func utcDayKey(for date: Date) -> String {
         let components = CommandCodeSpendWindow.utcCalendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
+    }
+
+    /// The fork's pre-account build stored one file for whichever Command Code account refreshed last.
+    /// Only a sole existing account can safely inherit it; with several accounts, a shared history would
+    /// necessarily mix their spend.
+    static func migrateLegacyIfUnaffected(
+        directory: URL = defaultDirectory,
+        existingAccountIDs: [String]
+    ) {
+        guard existingAccountIDs.count == 1 else { return }
+        let legacy = directory.appendingPathComponent("commandcode-spend-history.json")
+        guard FileManager.default.fileExists(atPath: legacy.path) else { return }
+        let destination = directory.appendingPathComponent(
+            "commandcode-spend-history-\(existingAccountIDs[0].replacingOccurrences(of: "@", with: "-")).json"
+        )
+        if !FileManager.default.fileExists(atPath: destination.path) {
+            do {
+                try FileManager.default.moveItem(at: legacy, to: destination)
+                AppLog.notice(.config, "moved the Command Code spend history to its existing account")
+            } catch {
+                AppLog.warn(.config, "could not move the Command Code spend history: \(error.localizedDescription)")
+            }
+        }
     }
 
     private static func windowKeys(through now: Date) -> Set<String> {
@@ -167,8 +191,13 @@ struct CommandCodeSpendHistoryStore: Sendable {
 
     // MARK: - Persistence
 
-    private func load() -> FilePayload {
-        guard let data = try? Data(contentsOf: fileURL),
+    private func fileURL(accountID: String) -> URL {
+        directory
+            .appendingPathComponent("commandcode-spend-history-\(accountID.replacingOccurrences(of: "@", with: "-")).json")
+    }
+
+    private func load(accountID: String) -> FilePayload {
+        guard let data = try? Data(contentsOf: fileURL(accountID: accountID)),
               let payload = try? JSONDecoder().decode(FilePayload.self, from: data),
               payload.schema == Self.schema
         else {
@@ -177,10 +206,10 @@ struct CommandCodeSpendHistoryStore: Sendable {
         return payload
     }
 
-    private func save(_ payload: FilePayload) {
+    private func save(_ payload: FilePayload, accountID: String) {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try JSONEncoder().encode(payload).write(to: fileURL, options: .atomic)
+            try JSONEncoder().encode(payload).write(to: fileURL(accountID: accountID), options: .atomic)
         } catch {
             // Best-effort: a failed write just means the history misses a day, never a failed refresh.
         }

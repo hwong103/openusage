@@ -43,6 +43,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         AppearanceSetting.applyCurrent()
         let container = AppContainer(telemetry: PostHogTelemetrySink(), telemetryDefaults: TelemetryRecorder.suite)
         self.container = container
+        CommandCodeSpendHistoryStore.migrateLegacyIfUnaffected(
+            existingAccountIDs: container.accounts.accounts
+                .filter { $0.kind == .commandcode }
+                .map(\.cardID)
+        )
         Task { await CommandCodeV1Files.importOnce(into: container.accounts) }
         container.startRefreshing()
         Task { await APIKeyV1Files.importOnce(into: container.accounts) }

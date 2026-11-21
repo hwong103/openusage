@@ -59,7 +59,7 @@ extension AccountProviderRuntime {
         }
 
         let store = CommandCodeSpendHistoryStore()
-        if store.needsBackfill(now: asOf) {
+        if store.needsBackfill(for: account.cardID, now: asOf) {
             await backfillCommandCodeHistory(
                 client: client,
                 apiKey: apiKey,
@@ -75,8 +75,9 @@ extension AccountProviderRuntime {
             summaryBody: summary,
             subscription: subscription
         )
+        let accountID = account.cardID
         let history = try await loadOffMainActor {
-            store.history(through: asOf)
+            store.history(for: accountID, through: asOf)
         }
         return ProviderUsage(
             plan: mapped.plan,
@@ -158,7 +159,7 @@ extension AccountProviderRuntime {
             guard let today else { return nil }
             return (try? CommandCodeUsageMapper.spendTotal(from: body))?.subtracting(today)
         }
-        store.record(todayTotal: today, yesterdayTotal: yesterday, now: asOf)
+        store.record(for: account.cardID, todayTotal: today, yesterdayTotal: yesterday, now: asOf)
     }
 
     private func backfillCommandCodeHistory(
@@ -200,7 +201,11 @@ extension AccountProviderRuntime {
             return
         }
         let days = CommandCodeSpendHistoryStore.dayTotals(cumulativeByOffset: cumulative, now: asOf)
-        store.merge(dayTotals: days, backfillDay: CommandCodeSpendHistoryStore.utcDayKey(for: asOf))
+        store.merge(
+            dayTotals: days,
+            backfillDay: CommandCodeSpendHistoryStore.utcDayKey(for: asOf),
+            for: account.cardID
+        )
     }
 
     private nonisolated static func commandCodeSpendTotal(

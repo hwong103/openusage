@@ -2,6 +2,7 @@ import XCTest
 @testable import OpenUsage
 
 final class CommandCodeSpendHistoryTests: XCTestCase {
+    private let account = "commandcode@12345678"
     private var createdDirectories: [URL] = []
 
     override func tearDown() {
@@ -20,7 +21,7 @@ final class CommandCodeSpendHistoryTests: XCTestCase {
     }
 
     private func historyFileURL(_ store: CommandCodeSpendHistoryStore) -> URL {
-        store.directory.appendingPathComponent("commandcode-spend-history.json")
+        store.directory.appendingPathComponent("commandcode-spend-history-\(account.replacingOccurrences(of: "@", with: "-")).json")
     }
 
     private func seedFile(_ store: CommandCodeSpendHistoryStore, _ raw: String) throws {
@@ -55,18 +56,20 @@ final class CommandCodeSpendHistoryTests: XCTestCase {
     func testRecordOverwritesTodayFinalizesYesterdayAndIgnoresNil() {
         let store = makeStore()
         store.record(
+            for: account,
             todayTotal: .init(costUSD: 1, tokens: 100),
             yesterdayTotal: .init(costUSD: 2, tokens: 200),
             now: Fixtures.now
         )
         store.record(
+            for: account,
             todayTotal: .init(costUSD: 3.5, tokens: 350),
             yesterdayTotal: .init(costUSD: 2, tokens: 200),
             now: Fixtures.now
         )
-        store.record(todayTotal: nil, yesterdayTotal: nil, now: Fixtures.now)
+        store.record(for: account, todayTotal: nil, yesterdayTotal: nil, now: Fixtures.now)
 
-        let history = store.history(through: Fixtures.now)
+        let history = store.history(for: account, through: Fixtures.now)
         XCTAssertEqual(history.totals(over: .today)?[.spend], 3.5)
         XCTAssertEqual(history.totals(over: .today)?[.tokens], 350)
         XCTAssertEqual(history.totals(over: .yesterday)?[.spend], 2)
@@ -76,13 +79,13 @@ final class CommandCodeSpendHistoryTests: XCTestCase {
     func testCorruptAndOlderSchemaFilesStartFresh() throws {
         let corrupt = makeStore()
         try seedFile(corrupt, "not json")
-        XCTAssertTrue(corrupt.needsBackfill(now: Fixtures.now))
-        XCTAssertTrue(corrupt.history(through: Fixtures.now).days.isEmpty)
+        XCTAssertTrue(corrupt.needsBackfill(for: account, now: Fixtures.now))
+        XCTAssertTrue(corrupt.history(for: account, through: Fixtures.now).days.isEmpty)
 
         let old = makeStore()
         try seedFile(old, #"{"schema":0,"days":{"2026-10-04":{"costUSD":9,"tokens":9}}}"#)
-        XCTAssertTrue(old.needsBackfill(now: Fixtures.now))
-        XCTAssertTrue(old.history(through: Fixtures.now).days.isEmpty)
+        XCTAssertTrue(old.needsBackfill(for: account, now: Fixtures.now))
+        XCTAssertTrue(old.history(for: account, through: Fixtures.now).days.isEmpty)
     }
 
     func testWritesPruneDaysOlderThanRetention() throws {
@@ -92,7 +95,8 @@ final class CommandCodeSpendHistoryTests: XCTestCase {
                 "2026-08-20": .init(costUSD: 1, tokens: 1),
                 "2026-09-20": .init(costUSD: 2, tokens: 2)
             ],
-            backfillDay: "2026-10-04"
+            backfillDay: "2026-10-04",
+            for: account
         )
         let file = try readFile(store)
         XCTAssertNil(file.days["2026-08-20"])
@@ -101,11 +105,51 @@ final class CommandCodeSpendHistoryTests: XCTestCase {
 
     func testNeedsBackfillTracksDayRollover() {
         let store = makeStore()
-        XCTAssertTrue(store.needsBackfill(now: Fixtures.now))
-        store.merge(dayTotals: [:], backfillDay: "2026-10-04")
-        XCTAssertFalse(store.needsBackfill(now: Fixtures.now))
-        XCTAssertFalse(store.needsBackfill(now: Fixtures.laterOnSameUTCDay))
-        XCTAssertTrue(store.needsBackfill(now: Fixtures.nextUTCDay))
+        XCTAssertTrue(store.needsBackfill(for: account, now: Fixtures.now))
+        store.merge(dayTotals: [:], backfillDay: "2026-10-04", for: account)
+        XCTAssertFalse(store.needsBackfill(for: account, now: Fixtures.now))
+        XCTAssertFalse(store.needsBackfill(for: account, now: Fixtures.laterOnSameUTCDay))
+        XCTAssertTrue(store.needsBackfill(for: account, now: Fixtures.nextUTCDay))
+    }
+
+    func testLegacyHistoryMovesOnlyWhenOneAccountExists() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        createdDirectories.append(directory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let legacy = directory.appendingPathComponent("commandcode-spend-history.json")
+        try Data("{}".utf8).write(to: legacy)
+
+        CommandCodeSpendHistoryStore.migrateLegacyIfUnaffected(
+            directory: directory,
+            existingAccountIDs: ["commandcode@aaaaaaaa", "commandcode@bbbbbbbb"]
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacy.path))
+
+        let soleAccount = "commandcode@aaaaaaaa"
+        CommandCodeSpendHistoryStore.migrateLegacyIfUnaffected(directory: directory, existingAccountIDs: [soleAccount])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacy.path))
+        let destination = directory.appendingPathComponent(
+            "commandcode-spend-history-\(soleAccount.replacingOccurrences(of: "@", with: "-")).json"
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testTwoAccountsKeepSeparateHistories() {
+        let store = makeStore()
+        store.record(
+            for: "commandcode@aaaaaaaa",
+            todayTotal: .init(costUSD: 1, tokens: 100),
+            yesterdayTotal: nil,
+            now: Fixtures.now
+        )
+        store.record(
+            for: "commandcode@bbbbbbbb",
+            todayTotal: .init(costUSD: 9, tokens: 900),
+            yesterdayTotal: nil,
+            now: Fixtures.now
+        )
+        XCTAssertEqual(store.history(for: "commandcode@aaaaaaaa", through: Fixtures.now).totals(over: .today)?[.spend], 1)
+        XCTAssertEqual(store.history(for: "commandcode@bbbbbbbb", through: Fixtures.now).totals(over: .today)?[.spend], 9)
     }
 
     func testHistoryUsesTheUTCWindowAndReportsTheRightDay() {
@@ -117,10 +161,11 @@ final class CommandCodeSpendHistoryTests: XCTestCase {
                 "2026-09-03": .init(costUSD: 5, tokens: 5_000),
                 "2026-09-04": .init(costUSD: 4, tokens: 4_000)
             ],
-            backfillDay: "2026-10-04"
+            backfillDay: "2026-10-04",
+            for: account
         )
 
-        let history = store.history(through: Fixtures.utcEvening)
+        let history = store.history(for: account, through: Fixtures.utcEvening)
         XCTAssertEqual(history.calendar.timeZone.secondsFromGMT(), 0)
         XCTAssertEqual(history.totals(over: .today)?[.spend], 3)
         XCTAssertEqual(history.totals(over: .today)?[.tokens], 3_000)
