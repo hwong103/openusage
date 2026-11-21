@@ -73,9 +73,32 @@ final class CommandCodeUsageMapperTests: XCTestCase {
 @MainActor
 final class CommandCodeRuntimeTests: XCTestCase {
     private var directory: URL?
+    private var historyStore: CommandCodeSpendHistoryStore?
+
+    private func makeRuntime(
+        account: Account,
+        vault: InMemoryCredentialVault,
+        http: RoutingHTTPClient
+    ) -> AccountProviderRuntime {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("openusage-cc-runtime-\(UUID().uuidString)", isDirectory: true)
+        self.directory = directory
+        let store = CommandCodeSpendHistoryStore(directory: directory)
+        historyStore = store
+        let runtime = AccountProviderRuntime(account: account, vault: vault, http: http, now: { Fixtures.now })
+        runtime.historyStore = store
+        return runtime
+    }
 
     override func tearDown() {
         super.tearDown()
+    }
+
+    override func tearDown() async throws {
+        if let directory { try? FileManager.default.removeItem(at: directory) }
+        directory = nil
+        historyStore = nil
+        try await super.tearDown()
     }
 
     func testAccountOwnedProviderMapsUsageAndHistory() async throws {
@@ -103,7 +126,7 @@ final class CommandCodeRuntimeTests: XCTestCase {
         let account = Account(kind: .commandcode, label: "Work")
         let vault = InMemoryCredentialVault()
         try vault.save(.apiKey("secret"), for: account.id)
-        let runtime = AccountProviderRuntime(account: account, vault: vault, http: http, now: { Fixtures.now })
+        let runtime = makeRuntime(account: account, vault: vault, http: http)
         XCTAssertEqual(runtime.provider.id, account.cardID)
         XCTAssertEqual(runtime.provider.displayName, "Command Code")
         XCTAssertEqual(runtime.widgetDescriptors.map(\.key), [
@@ -138,9 +161,7 @@ final class CommandCodeRuntimeTests: XCTestCase {
         let account = Account(kind: .commandcode, label: "Work")
         let vault = InMemoryCredentialVault()
         try vault.save(.apiKey("secret"), for: account.id)
-        let snapshot = try await AccountProviderRuntime(
-            account: account, vault: vault, http: http, now: { Fixtures.now }
-        ).refresh().get()
+        let snapshot = try await makeRuntime(account: account, vault: vault, http: http).refresh().get()
         XCTAssertEqual(snapshot.lines.map(\.label), ["Session", "Weekly", "Monthly", "Requests", "Balance"])
         XCTAssertEqual(snapshot.notice, "Couldn't read Command Code spend history.")
     }

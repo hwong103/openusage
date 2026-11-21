@@ -48,6 +48,7 @@ extension AccountProviderRuntime {
         }
 
         let asOf = now()
+        let accountID = account.cardID
         let windows = try await commandCodeSpendWindows(
             client: client,
             apiKey: apiKey,
@@ -58,24 +59,25 @@ extension AccountProviderRuntime {
             notes.append("Couldn't read Command Code spend history.")
         }
 
-        let store = CommandCodeSpendHistoryStore()
-        if store.needsBackfill(for: account.cardID, now: asOf) {
+        let store = historyStore
+        let needsBackfill = try await loadOffMainActor { store.needsBackfill(for: accountID, now: asOf) }
+        if needsBackfill {
             await backfillCommandCodeHistory(
                 client: client,
                 apiKey: apiKey,
                 organizationID: organizationID,
                 store: store,
+                accountID: accountID,
                 asOf: asOf
             )
         }
-        recordCommandCodeWindows(windows, store: store, asOf: asOf)
+        recordCommandCodeWindows(windows, store: store, accountID: accountID, asOf: asOf)
 
         let mapped = try CommandCodeUsageMapper.map(
             creditsBody: credits,
             summaryBody: summary,
             subscription: subscription
         )
-        let accountID = account.cardID
         let history = try await loadOffMainActor {
             store.history(for: accountID, through: asOf)
         }
@@ -152,6 +154,7 @@ extension AccountProviderRuntime {
     private func recordCommandCodeWindows(
         _ windows: CommandCodeFetchedWindows,
         store: CommandCodeSpendHistoryStore,
+        accountID: String,
         asOf: Date
     ) {
         let today = windows.today.flatMap { try? CommandCodeUsageMapper.spendTotal(from: $0) }
@@ -159,7 +162,7 @@ extension AccountProviderRuntime {
             guard let today else { return nil }
             return (try? CommandCodeUsageMapper.spendTotal(from: body))?.subtracting(today)
         }
-        store.record(for: account.cardID, todayTotal: today, yesterdayTotal: yesterday, now: asOf)
+        store.record(for: accountID, todayTotal: today, yesterdayTotal: yesterday, now: asOf)
     }
 
     private func backfillCommandCodeHistory(
@@ -167,6 +170,7 @@ extension AccountProviderRuntime {
         apiKey: String,
         organizationID: String?,
         store: CommandCodeSpendHistoryStore,
+        accountID: String,
         asOf: Date
     ) async {
         let offsets = Array(0...30)
@@ -204,7 +208,7 @@ extension AccountProviderRuntime {
         store.merge(
             dayTotals: days,
             backfillDay: CommandCodeSpendHistoryStore.utcDayKey(for: asOf),
-            for: account.cardID
+            for: accountID
         )
     }
 

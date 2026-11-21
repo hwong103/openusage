@@ -12,6 +12,7 @@ final class AccountProviderRuntime: ProviderRuntime {
     var codexResetCreditsRead = SecondaryRead<HTTPResponse>()
     var zaiResetsRead = SecondaryRead<[ZAIReset]>()
     var cursorMembershipRead = SecondaryRead<String>()
+    var historyStore = CommandCodeSpendHistoryStore()
     let usageLedger = UsageLedger()
     let codexCreditsLedger = UsageLedger()
     var claude: ClaudeAccountState
