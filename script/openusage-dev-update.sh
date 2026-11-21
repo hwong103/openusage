@@ -15,7 +15,7 @@ INSTALL_TARGET="${OPENUSAGE_INSTALL_TARGET:-$HOME/Applications/Openusage Dev.app
 STAGED_APP="${OPENUSAGE_STAGED_APP:-$ROOT_DIR/dist/Openusage Dev.app}"
 LAUNCH_LABEL="com.hwong103.openusage-dev"
 LAUNCH_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_LABEL.plist"
-CLI_LINK="/opt/homebrew/bin/openusage"
+CLI_LINK="${OPENUSAGE_CLI_LINK:-/opt/homebrew/bin/openusage}"
 SYNC_UPSTREAM="${OPENUSAGE_SYNC_UPSTREAM:-0}"
 UPSTREAM_REF="${OPENUSAGE_UPSTREAM_REF:-upstream/main}"
 BASE_BRANCH="${OPENUSAGE_BASE_BRANCH:-main}"
@@ -134,7 +134,18 @@ cd "$ROOT_DIR"
   fi
   mv "$TMP_TARGET" "$INSTALL_TARGET"
 
+  mkdir -p "$(dirname "$CLI_LINK")"
   if [[ -L "$CLI_LINK" ]] || [[ -e "$CLI_LINK" ]]; then
+    if [[ -L "$CLI_LINK" ]]; then
+      existing_link="$(readlink "$CLI_LINK")"
+      case "$existing_link" in
+        "$INSTALL_TARGET/Contents/Helpers/openusage"|"$LIVE_PREVIOUS/Contents/Helpers/openusage"|"$PREVIOUS/Contents/Helpers/openusage") ;;
+        *) echo "Update refused: $CLI_LINK points to an unrelated file." >&2; exit 1 ;;
+      esac
+    else
+      echo "Update refused: $CLI_LINK is an unrelated file." >&2
+      exit 1
+    fi
     rm -f "$CLI_LINK"
   fi
   ln -s "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"
