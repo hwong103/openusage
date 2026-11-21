@@ -7,12 +7,12 @@ set -euo pipefail
 # Usage:
 #   script/openusage-dev-bootstrap.sh <full-commit-sha>
 
-COMMIT="${1:-}"
-if [[ ! "$COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+APP_COMMIT="${1:-}"
+if [[ ! "$APP_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "Usage: $0 <full-commit-sha>" >&2
   exit 2
 fi
-COMMIT="$(printf '%s' "$COMMIT" | tr '[:upper:]' '[:lower:]')"
+APP_COMMIT="$(printf '%s' "$APP_COMMIT" | tr '[:upper:]' '[:lower:]')"
 
 REPOSITORY="${OPENUSAGE_REPOSITORY:-https://github.com/hwong103/openusage.git}"
 BRANCH="${OPENUSAGE_BRANCH:-main}"
@@ -39,8 +39,11 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 
 git fetch --prune origin
-git cat-file -e "$COMMIT^{commit}"
-git checkout --detach "$COMMIT"
+SCRIPT_COMMIT="$(git rev-parse HEAD)"
+printf 'Using accepted updater from %s/script/openusage-dev-update.sh (%s).\n' \
+  "$CHECKOUT" "$SCRIPT_COMMIT"
+git cat-file -e "$APP_COMMIT^{commit}"
+git checkout --detach "$APP_COMMIT"
 if ! git remote get-url upstream >/dev/null 2>&1; then
   git remote add upstream https://github.com/robinebers/openusage.git
 fi

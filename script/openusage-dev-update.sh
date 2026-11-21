@@ -150,7 +150,8 @@ restore_previous() {
   pkill -f "^$INSTALL_TARGET/Contents/MacOS/OpenUsage$" >/dev/null 2>&1 || true
   rm -rf "$INSTALL_TARGET"
   if [[ -d "$LIVE_PREVIOUS" ]]; then
-    mv "$LIVE_PREVIOUS" "$INSTALL_TARGET"
+    ditto "$LIVE_PREVIOUS/Contents" "$INSTALL_TARGET/Contents"
+    rm -rf "$LIVE_PREVIOUS"
     ln -sfn "$INSTALL_TARGET/Contents/Helpers/openusage" "$CLI_LINK"
     if ! install_launch_agent; then
       echo "Restored app is installed, but its login launch item could not be reloaded." >&2
@@ -297,11 +298,11 @@ cd "$ROOT_DIR"
 
   BACKUP="$HOME/Library/Application Support/Openusage Dev/backup"
   mkdir -p "$BACKUP"
-  PREVIOUS="$BACKUP/Openusage Dev.app.previous"
-  LIVE_PREVIOUS="$HOME/Applications/.Openusage Dev.app.previous"
+  PREVIOUS="$BACKUP/Openusage Dev.previous"
+  LIVE_PREVIOUS="$HOME/Applications/.Openusage Dev.previous"
   if [[ -d "$INSTALL_TARGET" ]]; then
     rm -rf "$PREVIOUS"
-    ditto "$INSTALL_TARGET" "$PREVIOUS"
+    ditto "$INSTALL_TARGET/Contents" "$PREVIOUS/Contents"
   fi
 
   TMP_TARGET="$HOME/Applications/.Openusage Dev.app.installing"
@@ -336,7 +337,8 @@ cd "$ROOT_DIR"
 
   rm -rf "$LIVE_PREVIOUS"
   if [[ -d "$INSTALL_TARGET" ]]; then
-    mv "$INSTALL_TARGET" "$LIVE_PREVIOUS"
+    ditto "$INSTALL_TARGET/Contents" "$LIVE_PREVIOUS/Contents"
+    rm -rf "$INSTALL_TARGET"
   fi
   mv "$TMP_TARGET" "$INSTALL_TARGET"
 
