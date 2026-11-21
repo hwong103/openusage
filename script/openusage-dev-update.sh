@@ -36,13 +36,18 @@ verify_commandcode_fresh() {
   local elapsed=0
   local timeout_seconds="${OPENUSAGE_VERIFY_TIMEOUT_SECONDS:-180}"
 
-  configured="$(/usr/bin/defaults export com.robinebers.openusage.dev - 2>/dev/null | /usr/bin/python3 -c '
+  configured="$(/usr/bin/python3 -c '
 import json
 import plistlib
+import subprocess
 import sys
 
 try:
-    values = plistlib.loads(sys.stdin.buffer.read())
+    data = subprocess.check_output(
+        ["/usr/bin/defaults", "export", "com.robinebers.openusage.dev", "-"],
+        stderr=subprocess.DEVNULL,
+    )
+    values = plistlib.loads(data)
     accounts = json.loads(values["accounts.v1"])
 except Exception:
     accounts = []
