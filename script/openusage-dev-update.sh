@@ -42,7 +42,7 @@ import plistlib
 import sys
 
 try:
-    values = plistlib.load(sys.stdin.buffer)
+    values = plistlib.loads(sys.stdin.buffer.read())
     accounts = json.loads(values["accounts.v1"])
 except Exception:
     accounts = []
