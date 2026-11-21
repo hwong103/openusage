@@ -40,6 +40,9 @@ fi
 git fetch --prune origin
 git cat-file -e "$COMMIT^{commit}"
 git checkout --detach "$COMMIT"
+if ! git remote get-url upstream >/dev/null 2>&1; then
+  git remote add upstream https://github.com/robinebers/openusage.git
+fi
 
 OPENUSAGE_UPDATE_CURRENT_BRANCH=1 \
 OPENUSAGE_INSTALL_TARGET="${OPENUSAGE_INSTALL_TARGET:-$HOME/Applications/Openusage Dev.app}" \

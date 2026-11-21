@@ -184,7 +184,14 @@ cd "$ROOT_DIR"
   fi
 
   git fetch --prune --tags origin
-  git fetch --prune --tags upstream
+  if git remote get-url upstream >/dev/null 2>&1; then
+    git fetch --prune --tags upstream
+  elif [[ "$SYNC_UPSTREAM" == "1" ]]; then
+    echo "Update refused: upstream syncing was requested, but this checkout has no upstream remote." >&2
+    exit 1
+  else
+    echo "No upstream remote is configured; skipping upstream fetch."
+  fi
 
   if [[ "${OPENUSAGE_UPDATE_CURRENT_BRANCH:-0}" != "1" ]]; then
     current_branch="$(git rev-parse --abbrev-ref HEAD)"
